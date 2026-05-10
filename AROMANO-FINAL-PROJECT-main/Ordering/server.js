@@ -391,6 +391,64 @@ app.get('/api/customers', authenticateToken, requireAdmin, (req, res) => {
     });
 });
 
+// GET current user's customer profile
+app.get('/api/customers/me', authenticateToken, (req, res) => {
+    db.query('SELECT * FROM customers WHERE email = ? LIMIT 1', [req.user.email], (err, results) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (results.length === 0) return res.status(404).json({ error: 'Customer profile not found' });
+        res.json(results[0]);
+    });
+});
+
+// POST create current user's customer profile
+app.post('/api/customers/me', authenticateToken, async (req, res) => {
+    const { first_name, last_name, phone, address } = req.body;
+    try {
+        const user = await User.findById(req.user.userId).select('first_name last_name email');
+        if (!user) return res.status(404).json({ error: 'User not found' });
+
+        db.query('SELECT * FROM customers WHERE email = ? LIMIT 1', [req.user.email], (checkErr, existing) => {
+            if (checkErr) return res.status(500).json({ error: checkErr.message });
+            if (existing.length > 0) return res.status(400).json({ error: 'Customer profile already exists' });
+
+            const resolvedFirstName = first_name || user.first_name;
+            const resolvedLastName = last_name || user.last_name;
+            if (!resolvedFirstName || !resolvedLastName) {
+                return res.status(400).json({ error: 'First name and last name are required' });
+            }
+
+            const sql = 'INSERT INTO customers (first_name, last_name, email, phone, address) VALUES (?, ?, ?, ?, ?)';
+            db.query(sql, [resolvedFirstName, resolvedLastName, req.user.email, phone || 'N/A', address || 'N/A'], (err2, result) => {
+                if (err2) {
+                    if (err2.code === 'ER_DUP_ENTRY') {
+                        return res.status(400).json({ error: 'Email already exists' });
+                    }
+                    return res.status(500).json({ error: err2.message });
+                }
+                res.status(201).json({ customer_id: result.insertId, message: 'Customer profile created successfully' });
+            });
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Could not create customer profile' });
+    }
+});
+
+// PUT update current user's customer profile
+app.put('/api/customers/me', authenticateToken, (req, res) => {
+    const { first_name, last_name, phone, address } = req.body;
+    const sql = 'UPDATE customers SET first_name=?, last_name=?, phone=?, address=? WHERE email=?';
+    db.query(sql, [first_name, last_name, phone || 'N/A', address || 'N/A', req.user.email], (err, result) => {
+        if (err) {
+            if (err.code === 'ER_DUP_ENTRY') {
+                return res.status(400).json({ error: 'Email already exists' });
+            }
+            return res.status(500).json({ error: err.message });
+        }
+        if (result.affectedRows === 0) return res.status(404).json({ error: 'Customer profile not found' });
+        res.json({ message: 'Customer profile updated successfully' });
+    });
+});
+
 // GET single customer
 app.get('/api/customers/:id', authenticateToken, requireAdmin, (req, res) => {
     db.query('SELECT * FROM customers WHERE customer_id = ?', [req.params.id], (err, results) => {

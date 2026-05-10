@@ -104,7 +104,7 @@
   <script>
 const currentUser = JSON.parse(localStorage.getItem('aromano_auth_user'));
 
-if (!currentUser || currentUser.role !== 'admin') {
+if (!currentUser) {
     window.location.href = '/';
 }
 </script>

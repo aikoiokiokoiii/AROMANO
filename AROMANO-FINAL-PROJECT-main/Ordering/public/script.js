@@ -369,6 +369,8 @@ async function initCustomer() {
   const form = $('#customer-form');
   const list = $('#customer-list');
   if (!form) return;
+  const user = getAuthUser();
+  const isAdmin = user && user.role === 'admin';
 
   const loadCustomers = async () => {
     try {
@@ -390,28 +392,86 @@ async function initCustomer() {
     } catch (e) { list.innerHTML = '<p style="color:var(--fg-muted)">Could not load customers.</p>'; }
   };
 
-  await loadCustomers();
+  const loadMyProfile = async () => {
+    try {
+      const profile = await api('/customers/me');
+      form.first_name.value = profile.first_name || '';
+      form.last_name.value = profile.last_name || '';
+      form.email.value = profile.email || user.email || '';
+      form.phone.value = profile.phone || '';
+      form.address.value = profile.address || '';
+      form.dataset.editId = 'self';
+      $('#customer-submit').textContent = 'Update Profile';
+      list.innerHTML = `
+        <div class="customer-card">
+          <div>
+            <strong style="font-family:var(--font-display)">${profile.first_name} ${profile.last_name}</strong>
+            <div style="font-size:0.75rem;color:var(--fg-muted)">${profile.email} ${profile.phone ? '• ' + profile.phone : ''}</div>
+            ${profile.address ? `<div style="font-size:0.7rem;color:var(--fg-muted)">${profile.address}</div>` : ''}
+          </div>
+        </div>
+      `;
+    } catch (e) {
+      form.first_name.value = user?.first_name || '';
+      form.last_name.value = user?.last_name || '';
+      form.email.value = user?.email || '';
+      form.phone.value = '';
+      form.address.value = '';
+      delete form.dataset.editId;
+      $('#customer-submit').textContent = 'Save Profile';
+      list.innerHTML = '<p class="empty-state">No profile yet. Fill out the form to create your profile.</p>';
+    }
+  };
+
+  if (isAdmin) {
+    await loadCustomers();
+  } else {
+    const title = $('.section-title');
+    if (title) title.textContent = 'My Profile';
+    const subtitle = $('.container.pt-24.pb-20 > p');
+    if (subtitle) subtitle.textContent = 'View and update your customer profile information';
+    const listHeader = document.querySelector('#customer-list')?.parentElement?.querySelector('h3');
+    if (listHeader) listHeader.textContent = 'Profile Preview';
+    const formTitle = $('#form-title');
+    if (formTitle) formTitle.textContent = 'My Customer Profile';
+    await loadMyProfile();
+  }
 
   form.onsubmit = async (e) => {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(form));
     const editId = form.dataset.editId;
     try {
-      if (editId) {
-        await api(`/customers/${editId}`, { method: 'PUT', body: JSON.stringify(data) });
-        showToast('Customer updated');
-        delete form.dataset.editId;
-        $('#customer-submit').textContent = 'Add Customer';
+      if (isAdmin) {
+        if (editId) {
+          await api(`/customers/${editId}`, { method: 'PUT', body: JSON.stringify(data) });
+          showToast('Customer updated');
+          delete form.dataset.editId;
+          $('#customer-submit').textContent = 'Add Customer';
+        } else {
+          await api('/customers', { method: 'POST', body: JSON.stringify(data) });
+          showToast('Customer added');
+        }
+        form.reset();
+        await loadCustomers();
       } else {
-        await api('/customers', { method: 'POST', body: JSON.stringify(data) });
-        showToast('Customer added');
+        if (editId) {
+          await api('/customers/me', { method: 'PUT', body: JSON.stringify(data) });
+          showToast('Profile updated');
+        } else {
+          await api('/customers/me', { method: 'POST', body: JSON.stringify(data) });
+          showToast('Profile created');
+        }
+        await loadMyProfile();
       }
-      form.reset();
-      await loadCustomers();
     } catch (err) { showToast('Error: ' + err.message); }
   };
 
   window.editCustomer = async (id) => {
+    if (!isAdmin) {
+      form.scrollIntoView({ behavior: 'smooth' });
+      return;
+    }
     try {
       const c = await api(`/customers/${id}`);
       form.first_name.value = c.first_name;
@@ -426,6 +486,10 @@ async function initCustomer() {
   };
 
   window.deleteCustomer = async (id) => {
+    if (!isAdmin) {
+      showToast('You can only manage your own profile');
+      return;
+    }
     if (!confirm('Delete this customer?')) return;
     try {
       await api(`/customers/${id}`, { method: 'DELETE' });
@@ -445,14 +509,27 @@ async function initOrders() {
   const placeBtn = $('#place-order-btn');
   const summaryEl = $('#order-summary');
   if (!cartList) return;
+  const currentUser = getAuthUser();
+  const isAdmin = currentUser && currentUser.role === 'admin';
 
   let products = [];
   try { products = await api('/products'); } catch (e) {}
-  try {
-    const customers = await api('/customers');
-    custSelect.innerHTML = '<option value="">Select customer...</option>' +
-      customers.map(c => `<option value="${c.customer_id}">${c.first_name} ${c.last_name} (${c.email})</option>`).join('');
-  } catch (e) {}
+  if (isAdmin) {
+    try {
+      const customers = await api('/customers');
+      custSelect.innerHTML = '<option value="">Select customer...</option>' +
+        customers.map(c => `<option value="${c.customer_id}">${c.first_name} ${c.last_name} (${c.email})</option>`).join('');
+    } catch (e) {
+      custSelect.innerHTML = '<option value="">Could not load customers</option>';
+    }
+  } else {
+    try {
+      const profile = await api('/customers/me');
+      custSelect.innerHTML = `<option value="${profile.customer_id}" selected>${profile.first_name} ${profile.last_name} (${profile.email})</option>`;
+    } catch (e) {
+      custSelect.innerHTML = '<option value="">Set up your customer profile first</option>';
+    }
+  }
 
   const renderCart = () => {
     const cart = getCart();
@@ -540,8 +617,24 @@ let expandedOrderId = null;
 async function initOrderTable() {
   const tbody = $('#order-tbody');
   if (!tbody) return;
+  const user = getAuthUser();
+  const isAdmin = user && user.role === 'admin';
+  const dashboardTitle = $('.section-title');
+  const dashboardSubtitle = $('.container.pt-24.pb-20 > p');
+  const transactionsSubtitle = $('.container.pt-24.pb-20 h2.section-title + p');
+  const analyticsGrid = $('.analytics-grid');
+  const actionsHeader = document.querySelector('.order-table thead th:last-child');
+
+  if (!isAdmin) {
+    if (dashboardTitle) dashboardTitle.textContent = 'My Order Transactions';
+    if (dashboardSubtitle) dashboardSubtitle.textContent = 'Your transaction history and status updates';
+    if (transactionsSubtitle) transactionsSubtitle.textContent = 'View your own order transactions';
+    if (analyticsGrid) analyticsGrid.style.display = 'none';
+    if (actionsHeader) actionsHeader.textContent = 'Details';
+  }
+
   await loadOrderTable();
-  await loadAnalytics();
+  if (isAdmin) await loadAnalytics();
 }
 
 async function loadOrderTable() {
@@ -550,7 +643,16 @@ async function loadOrderTable() {
   const isAdmin = user && user.role === 'admin';
 
   try {
-    const orders = await api('/orders');
+    const orders = isAdmin
+      ? await api('/orders')
+      : (await api('/order-tracking')).map(track => ({
+        order_id: track.order_id,
+        customer_name: track.order ? `${track.order.first_name} ${track.order.last_name}` : 'You',
+        items: [],
+        total_amount: track.order?.total_amount || 0,
+        order_date: track.order?.order_date || track.created_at,
+        status: track.status || 'pending',
+      }));
     if (orders.length === 0) {
       tbody.innerHTML = '<tr><td colspan="7" class="text-center" style="padding:2rem;color:var(--fg-muted)">No orders found</td></tr>';
       return;
@@ -585,8 +687,10 @@ async function loadOrderTable() {
           ${statusCell}
           <td style="text-align:right">
             <div style="display:flex;gap:0.5rem;justify-content:flex-end">
-              <button class="btn btn-outline btn-sm" onclick="toggleEdit(${order.order_id})">${expandedOrderId === order.order_id ? 'Close' : 'Update'}</button>
-              <button class="btn-destructive" onclick="confirmDelete(${order.order_id})" title="Delete">✕</button>
+              ${isAdmin
+                ? `<button class="btn btn-outline btn-sm" onclick="toggleEdit(${order.order_id})">${expandedOrderId === order.order_id ? 'Close' : 'Update'}</button>
+              <button class="btn-destructive" onclick="confirmDelete(${order.order_id})" title="Delete">✕</button>`
+                : `<a class="btn btn-outline btn-sm" href="order-tracking.html">View</a>`}
             </div>
           </td>
         </tr>`;
@@ -616,6 +720,11 @@ async function loadOrderTable() {
 }
 
 window.updateOrderStatus = async (orderId, newStatus) => {
+  const user = getAuthUser();
+  if (!user || user.role !== 'admin') {
+    showToast('Admin access required');
+    return;
+  }
   try {
     await api(`/order-tracking/${orderId}/status`, {
       method: 'PUT',
@@ -629,11 +738,18 @@ window.updateOrderStatus = async (orderId, newStatus) => {
 };
 
 window.toggleEdit = (orderId) => {
+  const user = getAuthUser();
+  if (!user || user.role !== 'admin') return;
   expandedOrderId = expandedOrderId === orderId ? null : orderId;
   loadOrderTable();
 };
 
 window.updateOrderQty = async (orderId, productId, newQty) => {
+  const user = getAuthUser();
+  if (!user || user.role !== 'admin') {
+    showToast('Admin access required');
+    return;
+  }
   try {
     await api(`/orders/${orderId}/items/${productId}`, {
       method: 'PUT',
@@ -645,6 +761,11 @@ window.updateOrderQty = async (orderId, productId, newQty) => {
 };
 
 window.confirmDelete = (orderId) => {
+  const user = getAuthUser();
+  if (!user || user.role !== 'admin') {
+    showToast('Admin access required');
+    return;
+  }
   const overlay = $('#delete-modal');
   $('#delete-modal-title').textContent = `Delete Order #${orderId}?`;
   overlay.classList.remove('hidden');
@@ -1087,11 +1208,11 @@ const orderTableLink = document.querySelector('a[href="ordertable.html"]');
 const trackOrdersLink = document.querySelector('a[href="order-tracking.html"]');
 
 if (customersLink) {
-    customersLink.style.display = isAdmin ? '' : 'none';
+    customersLink.style.display = isLoggedIn ? '' : 'none';
 }
 
 if (orderTableLink) {
-    orderTableLink.style.display = isAdmin ? '' : 'none';
+    orderTableLink.style.display = isLoggedIn ? '' : 'none';
 }
 
 if (trackOrdersLink) {
@@ -1137,20 +1258,8 @@ function updateNavbarVisibility() {
     if (ordersLink) ordersLink.style.display = '';
     if (trackOrdersLink) trackOrdersLink.style.display = '';
 
-    // ======================================
-    // ADMIN ONLY
-    // ======================================
-
-    if (isAdmin) {
-
-        if (customerLink) customerLink.style.display = '';
-        if (orderTableLink) orderTableLink.style.display = '';
-
-    } else {
-
-        if (customerLink) customerLink.style.display = 'none';
-        if (orderTableLink) orderTableLink.style.display = 'none';
-    }
+    if (customerLink) customerLink.style.display = '';
+    if (orderTableLink) orderTableLink.style.display = '';
 }
 
 // Run automatically

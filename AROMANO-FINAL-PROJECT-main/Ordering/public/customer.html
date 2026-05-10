@@ -15,6 +15,7 @@
         <a href="products.html">Collection</a>
         <a href="customer.html" class="active">Customers</a>
         <a href="orders.html">Place Order</a>
+        <a href="order-tracking.html">Track Orders</a>
         <a href="ordertable.html">Order Table</a>
       </div>
     </div>
@@ -77,7 +78,7 @@
   <script>
 const currentUser = JSON.parse(localStorage.getItem('aromano_auth_user'));
 
-if (!currentUser || currentUser.role !== 'admin') {
+if (!currentUser) {
     window.location.href = '/';
 }
 </script>
