@@ -360,6 +360,8 @@ function bindProductButtons() {
   $$('.reviews-btn').forEach(btn => {
     btn.onclick = () => openReviewsModal(Number(btn.dataset.id));
   });
+  // Keep favorites UI in sync after cards are rendered.
+  updateFavoriteButtons();
 }
 
 // ══════════════════════════════════════
@@ -622,13 +624,15 @@ async function initOrderTable() {
   const dashboardTitle = $('.section-title');
   const dashboardSubtitle = $('.container.pt-24.pb-20 > p');
   const transactionsSubtitle = $('.container.pt-24.pb-20 h2.section-title + p');
+  const transactionsTitle = $('.container.pt-24.pb-20 h2.section-title.mt-12');
   const analyticsGrid = $('.analytics-grid');
   const actionsHeader = document.querySelector('.order-table thead th:last-child');
 
   if (!isAdmin) {
     if (dashboardTitle) dashboardTitle.textContent = 'Order Transactions';
     if (dashboardSubtitle) dashboardSubtitle.textContent = 'View your own order transactions';
-    if (transactionsSubtitle) transactionsSubtitle.textContent = 'View your own order transactions';
+    if (transactionsTitle) transactionsTitle.style.display = 'none';
+    if (transactionsSubtitle) transactionsSubtitle.style.display = 'none';
     if (analyticsGrid) analyticsGrid.style.display = 'none';
     if (actionsHeader) actionsHeader.textContent = 'Details';
   }
@@ -658,7 +662,14 @@ async function loadOrderTable() {
       return;
     }
     tbody.innerHTML = orders.map(order => {
-      const products = order.items ? order.items.map(i => i.product_name || i.product?.product_name || 'Product').join(', ') : '';
+      const rawProducts = order.items || order.products || order.order?.items || order.order?.products || [];
+      const products = Array.isArray(rawProducts)
+        ? rawProducts.map(i => {
+          const name = i.product_name || i.name || i.product?.product_name || i.product?.name || i.title || 'Product';
+          const qty = i.quantity || i.qty || i.count || 1;
+          return `${name} x${qty}`;
+        }).join(', ')
+        : '';
       const currentStatus = order.status || 'pending';
 
       let statusCell;
