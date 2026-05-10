@@ -626,8 +626,8 @@ async function initOrderTable() {
   const actionsHeader = document.querySelector('.order-table thead th:last-child');
 
   if (!isAdmin) {
-    if (dashboardTitle) dashboardTitle.textContent = 'My Order Transactions';
-    if (dashboardSubtitle) dashboardSubtitle.textContent = 'Your transaction history and status updates';
+    if (dashboardTitle) dashboardTitle.textContent = 'Order Transactions';
+    if (dashboardSubtitle) dashboardSubtitle.textContent = 'View your own order transactions';
     if (transactionsSubtitle) transactionsSubtitle.textContent = 'View your own order transactions';
     if (analyticsGrid) analyticsGrid.style.display = 'none';
     if (actionsHeader) actionsHeader.textContent = 'Details';
@@ -648,7 +648,7 @@ async function loadOrderTable() {
       : (await api('/order-tracking')).map(track => ({
         order_id: track.order_id,
         customer_name: track.order ? `${track.order.first_name} ${track.order.last_name}` : 'You',
-        items: [],
+        items: track.items || track.order?.items || [],
         total_amount: track.order?.total_amount || 0,
         order_date: track.order?.order_date || track.created_at,
         status: track.status || 'pending',
