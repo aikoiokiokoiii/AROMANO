@@ -48,6 +48,81 @@ function updateFavoriteButtons() {
   });
 }
 
+function buildWishlistModal() {
+  if (document.getElementById('wishlist-modal')) return;
+  const modal = document.createElement('div');
+  modal.id = 'wishlist-modal';
+  modal.className = 'modal-overlay hidden';
+  modal.innerHTML = `
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>Wishlist</h3>
+        <button class="modal-close" id="wishlist-close-btn">×</button>
+      </div>
+      <div id="wishlist-content">Loading wishlist...</div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', (event) => {
+    if (event.target === modal) closeWishlistModal();
+  });
+  document.getElementById('wishlist-close-btn').addEventListener('click', closeWishlistModal);
+}
+
+function closeWishlistModal() {
+  const modal = document.getElementById('wishlist-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function openWishlistModal() {
+  const user = getAuthUser();
+  if (!user) {
+    openAuthModal('login');
+    return;
+  }
+  buildWishlistModal();
+  const modal = document.getElementById('wishlist-modal');
+  const content = document.getElementById('wishlist-content');
+  if (!modal || !content) return;
+  modal.classList.remove('hidden');
+
+  try {
+    await loadWishlist();
+    const products = await api('/products');
+    const favorites = products.filter(p => wishlistItems.has(p.product_id));
+    if (favorites.length === 0) {
+      content.innerHTML = '<p class="empty-state">Your wishlist is empty.</p>';
+      return;
+    }
+    content.innerHTML = favorites.map(p => `
+      <div class="edit-item">
+        <div>
+          <div style="font-size:0.875rem">${p.product_name}</div>
+          <div style="font-size:0.7rem;color:var(--fg-muted)">₱${Number(p.price).toLocaleString()} • ${p.brand}</div>
+        </div>
+        <button class="btn btn-outline btn-sm wishlist-remove-btn" data-id="${p.product_id}">Remove</button>
+      </div>
+    `).join('');
+    $$('.wishlist-remove-btn', content).forEach(btn => {
+      btn.onclick = async () => {
+        await toggleFavorite(Number(btn.dataset.id));
+        await openWishlistModal();
+      };
+    });
+  } catch (err) {
+    content.innerHTML = '<p style="color:var(--fg-muted)">Could not load wishlist.</p>';
+  }
+}
+
+function wireWishlistNavLink() {
+  const link = document.getElementById('wishlist-nav-link');
+  if (!link) return;
+  link.onclick = (event) => {
+    event.preventDefault();
+    openWishlistModal();
+  };
+}
+
 // ── Reviews ──
 async function openReviewsModal(productId) {
   const modal = document.createElement('div');
@@ -663,13 +738,22 @@ async function loadOrderTable() {
     }
     tbody.innerHTML = orders.map(order => {
       const rawProducts = order.items || order.products || order.order?.items || order.order?.products || [];
+      const fallbackOrderName = order.productName || order.title || '';
       const products = Array.isArray(rawProducts)
-        ? rawProducts.map(i => {
-          const name = i.product_name || i.name || i.product?.product_name || i.product?.name || i.title || 'Product';
-          const qty = i.quantity || i.qty || i.count || 1;
-          return `${name} x${qty}`;
+        ? rawProducts.map(item => {
+          const productName =
+            item.name ||
+            item.productName ||
+            item.title ||
+            item.product?.name ||
+            item.product?.title ||
+            order.productName ||
+            order.title ||
+            'Unknown Product';
+          const qty = item.quantity || item.qty || item.count || 1;
+          return `${productName} x${qty}`;
         }).join(', ')
-        : '';
+        : (fallbackOrderName ? `${fallbackOrderName} x1` : 'Unknown Product x1');
       const currentStatus = order.status || 'pending';
 
       let statusCell;
@@ -999,6 +1083,8 @@ function buildAuthModal() {
 
 async function initAuthUI() {
   buildAuthModal();
+  buildWishlistModal();
+  wireWishlistNavLink();
   wireLegacyAuthLinks();
   await verifyAuth();
   await loadWishlist();
@@ -1217,6 +1303,7 @@ const isAdmin = currentUser?.role === 'admin';
 const customersLink = document.querySelector('a[href="customer.html"]');
 const orderTableLink = document.querySelector('a[href="ordertable.html"]');
 const trackOrdersLink = document.querySelector('a[href="order-tracking.html"]');
+const wishlistLink = document.getElementById('wishlist-nav-link');
 
 if (customersLink) {
     customersLink.style.display = isLoggedIn ? '' : 'none';
@@ -1228,6 +1315,10 @@ if (orderTableLink) {
 
 if (trackOrdersLink) {
     trackOrdersLink.style.display = isLoggedIn ? '' : 'none';
+}
+
+if (wishlistLink) {
+    wishlistLink.style.display = isLoggedIn ? '' : 'none';
 }
 // ======================================
 // NAVBAR VISIBILITY CONTROL
@@ -1245,6 +1336,7 @@ function updateNavbarVisibility() {
     const trackOrdersLink = document.querySelector('a[href="order-tracking.html"]');
     const customerLink = document.querySelector('a[href="customer.html"]');
     const orderTableLink = document.querySelector('a[href="ordertable.html"]');
+    const wishlistLink = document.getElementById('wishlist-nav-link');
 
     // ======================================
     // GUEST USER
@@ -1257,6 +1349,7 @@ function updateNavbarVisibility() {
         if (trackOrdersLink) trackOrdersLink.style.display = 'none';
         if (customerLink) customerLink.style.display = 'none';
         if (orderTableLink) orderTableLink.style.display = 'none';
+        if (wishlistLink) wishlistLink.style.display = 'none';
 
         return;
     }
@@ -1271,6 +1364,7 @@ function updateNavbarVisibility() {
 
     if (customerLink) customerLink.style.display = '';
     if (orderTableLink) orderTableLink.style.display = '';
+    if (wishlistLink) wishlistLink.style.display = '';
 }
 
 // Run automatically
