@@ -51,12 +51,12 @@ function updateFavoriteButtons() {
 // ── Reviews ──
 async function openReviewsModal(productId) {
   const modal = document.createElement('div');
-  modal.className = 'modal';
+  modal.className = 'modal-overlay';
   modal.innerHTML = `
-    <div class="modal-content">
+    <div class="modal-box">
       <div class="modal-header">
         <h3>Reviews & Ratings</h3>
-        <button class="modal-close" onclick="this.closest('.modal').remove()">×</button>
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
       </div>
       <div id="reviews-list">Loading...</div>
       <div id="review-form" style="margin-top:1rem;border-top:1px solid var(--border);padding-top:1rem">
@@ -70,7 +70,6 @@ async function openReviewsModal(productId) {
     </div>
   `;
   document.body.appendChild(modal);
-  modal.style.display = 'flex';
 
   // Load reviews
   await loadReviews(productId);
@@ -336,13 +335,13 @@ function getCart() { return JSON.parse(localStorage.getItem('aromano_cart') || '
 function saveCart(cart) { localStorage.setItem('aromano_cart', JSON.stringify(cart)); }
 
 function addToCart(productId) {
-  const currentUser = JSON.parse(localStorage.getItem('aromano_auth_user'));
+  const currentUser = getAuthUser();
 
-if (!currentUser) {
-    alert('You need to login or create an account first.');
-    window.location.href = '/login.html';
+  if (!currentUser) {
+    showToast('Login to add items to cart');
+    openAuthModal('login');
     return;
-}// We store just the id & qty; orders page will resolve details
+  }// We store just the id & qty; orders page will resolve details
   const cart = getCart();
   const existing = cart.find(c => c.product_id === productId);
   if (existing) existing.quantity++;
@@ -727,6 +726,24 @@ function closeAuthModal() {
   if (modal) modal.classList.add('hidden');
 }
 
+function wireLegacyAuthLinks() {
+  const loginLink = document.querySelector('a[href="login.html"]');
+  const registerLink = document.querySelector('a[href="register.html"]');
+
+  if (loginLink) {
+    loginLink.onclick = (event) => {
+      event.preventDefault();
+      openAuthModal('login');
+    };
+  }
+  if (registerLink) {
+    registerLink.onclick = (event) => {
+      event.preventDefault();
+      openAuthModal('register');
+    };
+  }
+}
+
 function renderAuthState() {
   const navLinks = document.querySelector('.navbar-links');
   if (!navLinks) return;
@@ -850,6 +867,7 @@ function buildAuthModal() {
 
 async function initAuthUI() {
   buildAuthModal();
+  wireLegacyAuthLinks();
   await verifyAuth();
   await loadWishlist();
   renderAuthState();
@@ -1096,9 +1114,6 @@ function updateNavbarVisibility() {
     const customerLink = document.querySelector('a[href="customer.html"]');
     const orderTableLink = document.querySelector('a[href="ordertable.html"]');
 
-    const loginLink = document.querySelector('a[href="login.html"]');
-    const registerLink = document.querySelector('a[href="register.html"]');
-
     // ======================================
     // GUEST USER
     // ======================================
@@ -1111,20 +1126,12 @@ function updateNavbarVisibility() {
         if (customerLink) customerLink.style.display = 'none';
         if (orderTableLink) orderTableLink.style.display = 'none';
 
-        // Show login/register
-        if (loginLink) loginLink.style.display = '';
-        if (registerLink) registerLink.style.display = '';
-
         return;
     }
 
     // ======================================
     // LOGGED IN USERS
     // ======================================
-
-    // Hide login/register
-    if (loginLink) loginLink.style.display = 'none';
-    if (registerLink) registerLink.style.display = 'none';
 
     // Show normal customer pages
     if (ordersLink) ordersLink.style.display = '';
