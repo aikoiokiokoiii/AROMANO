@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Order Tracking — Aromano Co.</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav class="navbar">
+    <div class="container">
+      <a href="index.html" class="navbar-brand">AROMANO CO.</a>
+      <div class="navbar-links">
+        <a href="index.html">Home</a>
+        <a href="products.html">Collection</a>
+        <a href="orders.html">Place Order</a>
+        <a href="order-tracking.html" class="active">Track Orders</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container pt-24 pb-20">
+    <h1 class="section-title">Order Tracking</h1>
+    <p style="margin-top:0.5rem;font-size:0.875rem;color:var(--fg-muted)">Track the status of your orders</p>
+
+    <div id="auth-required" style="display:none;text-align:center;padding:3rem">
+      <h3 style="color:var(--fg-muted);margin-bottom:1rem">Please log in to view your orders</h3>
+      <a href="index.html" class="btn btn-primary">Go to Home</a>
+    </div>
+
+    <div id="tracking-content" style="display:none">
+      <div id="tracking-list" class="mt-8">
+        <!-- Orders will be loaded here -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Order Details Modal -->
+  <div id="order-modal" class="modal-overlay hidden">
+    <div class="modal-box" style="max-width:600px">
+      <h3 class="modal-title">Order Details</h3>
+      <div id="order-details">
+        <!-- Order details will be loaded here -->
+      </div>
+      <div class="modal-actions">
+        <button id="close-modal-btn" class="btn btn-outline btn-sm">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-brand">AROMANO CO.</div>
+      <p class="footer-desc">Your trusted source for authentic, premium fragrances from the world's finest perfume houses.</p>
+      <p class="footer-copy">© 2026 Aromano Co. All rights reserved. Laboratory Project.</p>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+  <script>
+</script>
+</body>
+</html>

@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Order Transactions — Aromano Co.</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav class="navbar">
+    <div class="container">
+      <a href="index.html" class="navbar-brand">AROMANO CO.</a>
+      <div class="navbar-links">
+        <a href="index.html">Home</a>
+        <a href="products.html">Collection</a>
+        <a href="customer.html">Customers</a>
+        <a href="orders.html">Place Order</a>
+        <a href="order-tracking.html">Track Orders</a>
+        <a href="ordertable.html" class="active">Order Table</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container pt-24 pb-20">
+    <h1 class="section-title">Admin Dashboard</h1>
+    <p style="margin-top:0.5rem;font-size:0.875rem;color:var(--fg-muted)">Analytics overview and order management</p>
+
+    <!-- Analytics Cards -->
+    <div class="analytics-grid mt-8">
+      <div class="analytics-card">
+        <div class="card-icon">👥</div>
+        <div class="card-content">
+          <h3 class="card-title">Total Users</h3>
+          <p class="card-value" id="total-users">Loading...</p>
+        </div>
+      </div>
+      <div class="analytics-card">
+        <div class="card-icon">📦</div>
+        <div class="card-content">
+          <h3 class="card-title">Total Products</h3>
+          <p class="card-value" id="total-products">Loading...</p>
+        </div>
+      </div>
+      <div class="analytics-card">
+        <div class="card-icon">🛒</div>
+        <div class="card-content">
+          <h3 class="card-title">Total Orders</h3>
+          <p class="card-value" id="total-orders">Loading...</p>
+        </div>
+      </div>
+      <div class="analytics-card">
+        <div class="card-icon">💰</div>
+        <div class="card-content">
+          <h3 class="card-title">Sales Summary</h3>
+          <p class="card-value" id="sales-summary">Loading...</p>
+        </div>
+      </div>
+    </div>
+
+    <h2 class="section-title mt-12">Order Transactions</h2>
+    <p style="margin-top:0.5rem;font-size:0.875rem;color:var(--fg-muted)">View, update, or delete existing orders</p>
+
+    <div class="mt-8" style="overflow-x:auto">
+      <table class="order-table">
+        <thead>
+          <tr>
+            <th>Order ID</th>
+            <th>Customer</th>
+            <th>Products</th>
+            <th>Total</th>
+            <th>Date</th>
+            <th>Status</th>
+            <th style="text-align:right">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="order-tbody">
+          <tr><td colspan="7" style="padding:2rem;text-align:center;color:var(--fg-muted)">Loading orders...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Delete Confirmation Modal -->
+  <div id="delete-modal" class="modal-overlay hidden">
+    <div class="modal-box">
+      <h3 id="delete-modal-title" class="modal-title">Delete Order?</h3>
+      <p class="modal-desc">This will permanently remove this order and restore the product stock. This action cannot be undone.</p>
+      <div class="modal-actions">
+        <button id="delete-cancel-btn" class="btn btn-outline btn-sm">Cancel</button>
+        <button id="delete-confirm-btn" class="btn btn-sm" style="background:var(--destructive);color:#fff">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-brand">AROMANO CO.</div>
+      <p class="footer-desc">Your trusted source for authentic, premium fragrances from the world's finest perfume houses.</p>
+      <p class="footer-copy">© 2026 Aromano Co. All rights reserved. Laboratory Project.</p>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+  <script>
+const currentUser = JSON.parse(localStorage.getItem('aromano_auth_user'));
+
+if (!currentUser || currentUser.role !== 'admin') {
+    window.location.href = '/';
+}
+</script>
+</body>
+</html>
