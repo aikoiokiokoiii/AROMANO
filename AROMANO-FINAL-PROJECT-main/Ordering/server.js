@@ -379,6 +379,65 @@ app.get('/api/products/:id', (req, res) => {
     });
 });
 
+// POST create product (Admin)
+app.post('/api/products', authenticateToken, requireAdmin, (req, res) => {
+    const { brand, product_name, description, fragrance_family, size_ml, price, stock_quantity, image_url } = req.body;
+    if (!brand || !product_name || price === undefined || price === null) {
+        return res.status(400).json({ error: 'brand, product_name, and price are required' });
+    }
+    const sql = `INSERT INTO products (brand, product_name, description, fragrance_family, size_ml, price, stock_quantity, image_url)
+        VALUES (?,?,?,?,?,?,?,?)`;
+    const params = [
+        brand,
+        product_name,
+        description || null,
+        fragrance_family || null,
+        size_ml != null ? Number(size_ml) : 100,
+        Number(price),
+        stock_quantity != null ? Number(stock_quantity) : 0,
+        image_url || null,
+    ];
+    db.query(sql, params, (err, result) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.status(201).json({ product_id: result.insertId, message: 'Product created' });
+    });
+});
+
+// PUT update product (Admin)
+app.put('/api/products/:id', authenticateToken, requireAdmin, (req, res) => {
+    const { brand, product_name, description, fragrance_family, size_ml, price, stock_quantity, image_url } = req.body;
+    const sql = `UPDATE products SET brand=?, product_name=?, description=?, fragrance_family=?, size_ml=?, price=?, stock_quantity=?, image_url=? WHERE product_id=?`;
+    db.query(sql, [
+        brand,
+        product_name,
+        description || null,
+        fragrance_family || null,
+        size_ml != null ? Number(size_ml) : 100,
+        Number(price),
+        stock_quantity != null ? Number(stock_quantity) : 0,
+        image_url || null,
+        req.params.id,
+    ], (err, result) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (result.affectedRows === 0) return res.status(404).json({ error: 'Product not found' });
+        res.json({ message: 'Product updated' });
+    });
+});
+
+// DELETE product (Admin)
+app.delete('/api/products/:id', authenticateToken, requireAdmin, (req, res) => {
+    db.query('DELETE FROM products WHERE product_id = ?', [req.params.id], (err, result) => {
+        if (err) {
+            if (err.code === 'ER_ROW_IS_REFERENCED_2' || err.errno === 1451) {
+                return res.status(400).json({ error: 'Cannot delete: product is used on existing orders' });
+            }
+            return res.status(500).json({ error: err.message });
+        }
+        if (result.affectedRows === 0) return res.status(404).json({ error: 'Product not found' });
+        res.json({ message: 'Product deleted' });
+    });
+});
+
 // ============================================
 // API ROUTES: CUSTOMERS
 // ============================================
@@ -737,6 +796,22 @@ app.delete('/api/orders/:id', authenticateToken, requireAdmin, (req, res) => {
 // API ROUTES: ORDER TRACKING
 // ============================================
 
+function fetchOrderLineItems(orderId) {
+    return new Promise((resolve, reject) => {
+        const itemSql = `
+            SELECT oi.order_id, oi.product_id, oi.quantity, oi.unit_price,
+                   p.product_name, p.brand
+            FROM order_items oi
+            JOIN products p ON oi.product_id = p.product_id
+            WHERE oi.order_id = ?
+        `;
+        db.query(itemSql, [orderId], (err, items) => {
+            if (err) reject(err);
+            else resolve(items || []);
+        });
+    });
+}
+
 // GET order tracking for customer (their own orders)
 app.get('/api/order-tracking', authenticateToken, async (req, res) => {
     try {
@@ -744,30 +819,35 @@ app.get('/api/order-tracking', authenticateToken, async (req, res) => {
             .populate('user_id', 'first_name last_name email')
             .sort({ created_at: -1 });
 
-        // Get order details from MySQL for each tracking record
         const trackingWithOrders = await Promise.all(tracking.map(async (track) => {
-            return new Promise((resolve) => {
-                const sql = `
+            const sql = `
                     SELECT o.order_id, o.total_amount, o.order_date,
                            c.first_name, c.last_name, c.email
                     FROM orders o
                     JOIN customers c ON o.customer_id = c.customer_id
                     WHERE o.order_id = ?
                 `;
-                db.query(sql, [track.order_id], (err, results) => {
-                    if (err || results.length === 0) {
-                        resolve({
-                            ...track.toObject(),
-                            order: null
-                        });
-                    } else {
-                        resolve({
-                            ...track.toObject(),
-                            order: results[0]
-                        });
-                    }
+            try {
+                const results = await new Promise((resolve, reject) => {
+                    db.query(sql, [track.order_id], (err, rows) => {
+                        if (err) reject(err);
+                        else resolve(rows || []);
+                    });
                 });
-            });
+                if (results.length === 0) {
+                    return { ...track.toObject(), order: null, items: [] };
+                }
+                const orderRow = results[0];
+                const items = await fetchOrderLineItems(track.order_id);
+                return {
+                    ...track.toObject(),
+                    items,
+                    order: { ...orderRow, items },
+                };
+            } catch (e) {
+                console.error('Order tracking row error:', e.message);
+                return { ...track.toObject(), order: null, items: [] };
+            }
         }));
 
         res.json(trackingWithOrders);
@@ -801,12 +881,23 @@ app.get('/api/order-tracking/:orderId', authenticateToken, async (req, res) => {
             JOIN customers c ON o.customer_id = c.customer_id
             WHERE o.order_id = ?
         `;
-        db.query(sql, [tracking.order_id], (err, results) => {
+        db.query(sql, [tracking.order_id], async (err, results) => {
             if (err) return res.status(500).json({ error: err.message });
+
+            const orderRow = results[0] || null;
+            let items = [];
+            if (orderRow) {
+                try {
+                    items = await fetchOrderLineItems(tracking.order_id);
+                } catch (e) {
+                    console.error('Order items fetch error:', e.message);
+                }
+            }
 
             res.json({
                 ...tracking.toObject(),
-                order: results[0] || null
+                items,
+                order: orderRow ? { ...orderRow, items } : null,
             });
         });
     } catch (err) {

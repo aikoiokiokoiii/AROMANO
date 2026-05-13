@@ -245,6 +245,40 @@ async function api(path, opts = {}) {
   return res.json();
 }
 
+function resolveOrderCustomerName(order) {
+  if (!order || typeof order !== 'object') return '—';
+  const direct = order.customer_name && String(order.customer_name).trim();
+  if (direct) return direct;
+  const c = order.customer;
+  if (c) {
+    const n = c.name || [c.first_name, c.last_name].filter(Boolean).join(' ').trim();
+    if (n) return n;
+  }
+  const fl = [order.first_name, order.last_name].filter(Boolean).join(' ').trim();
+  if (fl) return fl;
+  const o = order.order;
+  if (o) {
+    const fromNested = [o.first_name, o.last_name].filter(Boolean).join(' ').trim();
+    if (fromNested) return fromNested;
+  }
+  return '—';
+}
+
+function resolveItemProductDisplayName(item, productById, order) {
+  const pid = item.product_id != null ? item.product_id : item.productId;
+  const matched = pid != null && productById ? productById.get(Number(pid)) : null;
+  const fromItem =
+    item.name ||
+    item.productName ||
+    item.title ||
+    item.product_name ||
+    (item.product && (item.product.name || item.product.product_name || item.product.title));
+  const fromCatalog = matched && (matched.product_name || matched.name);
+  const fromOrder = order && (order.productName || order.title);
+  const resolved = fromItem || fromCatalog || fromOrder;
+  return resolved ? String(resolved) : 'Unknown Product';
+}
+
 // ══════════════════════════════════════
 // INDEX PAGE
 // ══════════════════════════════════════
@@ -262,28 +296,154 @@ async function initIndex() {
 // ══════════════════════════════════════
 // PRODUCTS PAGE
 // ══════════════════════════════════════
+function openProductAdminModal(existing, onSaved) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  const isEdit = !!(existing && existing.product_id);
+  overlay.innerHTML = `
+    <div class="modal-box" style="max-width:420px;max-height:90vh;overflow-y:auto">
+      <div class="modal-header">
+        <h3>${isEdit ? 'Edit product' : 'Add product'}</h3>
+        <button type="button" class="modal-close" aria-label="Close">×</button>
+      </div>
+      <form id="admin-product-form" style="display:flex;flex-direction:column;gap:0.75rem;margin-top:0.75rem">
+        <div class="form-group"><label>Brand</label><input name="brand" class="form-input" required></div>
+        <div class="form-group"><label>Product name</label><input name="product_name" class="form-input" required></div>
+        <div class="form-group"><label>Description</label><textarea name="description" class="form-textarea" rows="2"></textarea></div>
+        <div class="form-group"><label>Fragrance family</label><input name="fragrance_family" class="form-input"></div>
+        <div class="form-group"><label>Size (ml)</label><input name="size_ml" type="number" class="form-input" min="1" step="1"></div>
+        <div class="form-group"><label>Price (₱)</label><input name="price" type="number" class="form-input" min="0" step="0.01" required></div>
+        <div class="form-group"><label>Stock</label><input name="stock_quantity" type="number" class="form-input" min="0" step="1"></div>
+        <div class="form-group"><label>Image URL</label><input name="image_url" class="form-input" placeholder="/images/prod1.jpg"></div>
+        <button type="submit" class="btn btn-gold" style="width:100%;justify-content:center">Save</button>
+      </form>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  $('.modal-close', overlay).onclick = close;
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  const form = $('#admin-product-form', overlay);
+  if (isEdit) {
+    form.brand.value = existing.brand || '';
+    form.product_name.value = existing.product_name || '';
+    form.description.value = existing.description || '';
+    form.fragrance_family.value = existing.fragrance_family || '';
+    form.size_ml.value = existing.size_ml != null ? existing.size_ml : '';
+    form.price.value = existing.price != null ? existing.price : '';
+    form.stock_quantity.value = existing.stock_quantity != null ? existing.stock_quantity : '';
+    form.image_url.value = existing.image_url || '';
+  }
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(form));
+    data.size_ml = data.size_ml ? Number(data.size_ml) : 100;
+    data.price = Number(data.price);
+    data.stock_quantity = data.stock_quantity !== '' ? Number(data.stock_quantity) : 0;
+    try {
+      if (isEdit) {
+        await api(`/products/${existing.product_id}`, { method: 'PUT', body: JSON.stringify(data) });
+        showToast('Product updated');
+      } else {
+        await api('/products', { method: 'POST', body: JSON.stringify(data) });
+        showToast('Product added');
+      }
+      close();
+      if (onSaved) await onSaved();
+    } catch (err) {
+      showToast(err.message || 'Save failed');
+    }
+  };
+}
+
+function bindAdminProductGrid(grid, productList, onRefresh) {
+  grid.onclick = async (e) => {
+    const del = e.target.closest('.admin-delete-product');
+    const ed = e.target.closest('.admin-edit-product');
+    if (del) {
+      const id = Number(del.dataset.id);
+      const p = productList.find(x => x.product_id === id);
+      if (!confirm(`Delete product #${id}${p ? ` (${p.product_name})` : ''}?`)) return;
+      try {
+        await api(`/products/${id}`, { method: 'DELETE' });
+        showToast('Product deleted');
+        const next = await api('/products');
+        onRefresh(next);
+      } catch (err) {
+        showToast(err.message || 'Delete failed');
+      }
+      return;
+    }
+    if (ed) {
+      const id = Number(ed.dataset.id);
+      const p = productList.find(x => x.product_id === id);
+      if (!p) return;
+      openProductAdminModal(p, async () => {
+        const next = await api('/products');
+        onRefresh(next);
+      });
+    }
+  };
+}
+
 async function initProducts() {
   const grid = $('#products-grid');
   const filterBar = $('#filter-bar');
   if (!grid) return;
+  const user = getAuthUser();
+  const isAdmin = user && user.role === 'admin';
+  const pageTitle = document.querySelector('.container.pt-24.pb-20 h1.section-title');
+  const pageSub = document.querySelector('.container.pt-24.pb-20 > p');
+  if (isAdmin) {
+    if (pageTitle) pageTitle.textContent = 'Product Management';
+    if (pageSub) pageSub.textContent = 'View, add, edit, or remove fragrances in the collection';
+    let toolbar = $('#admin-product-toolbar');
+    if (!toolbar && filterBar) {
+      toolbar = document.createElement('div');
+      toolbar.id = 'admin-product-toolbar';
+      toolbar.style.cssText = 'display:flex;gap:0.75rem;flex-wrap:wrap;margin-bottom:1rem;align-items:center';
+      toolbar.innerHTML = '<button type="button" class="btn btn-gold btn-sm" id="admin-add-product-btn">Add product</button>';
+      filterBar.parentNode.insertBefore(toolbar, filterBar);
+    }
+    if (toolbar) toolbar.style.display = 'flex';
+  }
   try {
-    const products = await api('/products');
-    const families = ['All', ...new Set(products.map(p => p.fragrance_family))];
-    filterBar.innerHTML = families.map(f =>
-      `<button class="filter-btn${f === 'All' ? ' active' : ''}" data-family="${f}">${f}</button>`
-    ).join('');
-    const render = (filter) => {
-      const list = filter === 'All' ? products : products.filter(p => p.fragrance_family === filter);
-      grid.innerHTML = list.map(productCardHTML).join('');
-      bindProductButtons();
+    let products = await api('/products');
+    let currentFamily = 'All';
+    const families = () => ['All', ...new Set(products.map(p => p.fragrance_family))];
+    const syncFilters = () => {
+      filterBar.innerHTML = families().map(f =>
+        `<button class="filter-btn${f === currentFamily ? ' active' : ''}" data-family="${f}">${f}</button>`
+      ).join('');
     };
-    render('All');
+    syncFilters();
+    const renderList = (list, family) => {
+      const filtered = family === 'All' ? list : list.filter(p => p.fragrance_family === family);
+      grid.innerHTML = filtered.map(p => productCardHTML(p, { adminMode: isAdmin })).join('');
+      bindProductButtons();
+      if (isAdmin) {
+        bindAdminProductGrid(grid, list, (nextProds) => {
+          products = nextProds;
+          syncFilters();
+          renderList(products, currentFamily);
+        });
+      }
+    };
+    renderList(products, currentFamily);
     filterBar.addEventListener('click', e => {
       if (!e.target.matches('.filter-btn')) return;
+      currentFamily = e.target.dataset.family;
       $$('.filter-btn', filterBar).forEach(b => b.classList.remove('active'));
       e.target.classList.add('active');
-      render(e.target.dataset.family);
+      renderList(products, currentFamily);
     });
+    const addBtn = $('#admin-add-product-btn');
+    if (isAdmin && addBtn) {
+      addBtn.onclick = () => openProductAdminModal(null, async () => {
+        products = await api('/products');
+        syncFilters();
+        renderList(products, currentFamily);
+      });
+    }
     initNotifications();
   } catch (e) { grid.innerHTML = '<p style="color:var(--fg-muted)">Could not load products.</p>'; }
 }
@@ -322,7 +482,8 @@ async function initWishlistPage() {
   initNotifications();
 }
 
-function productCardHTML(p) {
+function productCardHTML(p, options = {}) {
+  const { adminMode = false } = options;
   const user = getAuthUser();
   const showFavorites = user && user.role !== 'admin';
   const oos = p.stock_quantity <= 0;
@@ -368,6 +529,11 @@ function productCardHTML(p) {
       </div>
       <div style="margin-top:0.5rem;font-size:0.68rem;color:var(--fg-muted)">Notes: ${p.fragrance_family} • ${p.size_ml}ml • ${oos ? 'Out of stock' : 'In stock'}</div>
     </div>
+    ${adminMode ? `
+    <div style="padding:0.75rem 1rem;border-top:1px solid var(--border);display:flex;gap:0.5rem;flex-wrap:wrap">
+      <button type="button" class="btn btn-outline btn-sm admin-edit-product" data-id="${p.product_id}">Edit</button>
+      <button type="button" class="btn-destructive btn-sm admin-delete-product" data-id="${p.product_id}">Delete</button>
+    </div>` : ''}
   </div>`;
 }
 
@@ -418,20 +584,36 @@ async function initCustomer() {
   const loadCustomers = async () => {
     try {
       const customers = await api('/customers');
-      list.innerHTML = customers.map(c => `
-        <div class="customer-card" id="cust-${c.customer_id}">
-          <div>
-            <strong style="font-family:var(--font-display)">${c.first_name} ${c.last_name}</strong>
-            <div style="font-size:0.75rem;color:var(--fg-muted)">${c.email} ${c.phone ? '• ' + c.phone : ''}</div>
-            ${c.address ? `<div style="font-size:0.7rem;color:var(--fg-muted)">${c.address}</div>` : ''}
-          </div>
-          <div style="display:flex;gap:0.5rem">
-            <button class="btn btn-outline btn-sm" onclick="editCustomer(${c.customer_id})">Edit</button>
-            <button class="btn-destructive" onclick="deleteCustomer(${c.customer_id})" title="Delete">✕</button>
-          </div>
-        </div>
-      `).join('');
-      if (customers.length === 0) list.innerHTML = '<p class="empty-state">No customers yet.</p>';
+      list.innerHTML = customers.length === 0
+        ? '<p class="empty-state">No customer records yet.</p>'
+        : `
+        <div style="overflow-x:auto;border:1px solid var(--border);border-radius:0.75rem">
+          <table style="width:100%;border-collapse:collapse;font-size:0.875rem;background:var(--bg-card)">
+            <thead>
+              <tr style="text-align:left;border-bottom:1px solid var(--border)">
+                <th style="padding:0.65rem 0.75rem;font-family:var(--font-display);font-weight:600">Name</th>
+                <th style="padding:0.65rem 0.75rem;font-family:var(--font-display);font-weight:600">Email</th>
+                <th style="padding:0.65rem 0.75rem;font-family:var(--font-display);font-weight:600">Phone</th>
+                <th style="padding:0.65rem 0.75rem;font-family:var(--font-display);font-weight:600">Address</th>
+                <th style="padding:0.65rem 0.75rem;text-align:right;font-family:var(--font-display);font-weight:600">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${customers.map(c => `
+                <tr style="border-bottom:1px solid var(--border)">
+                  <td style="padding:0.65rem 0.75rem;vertical-align:top">${c.first_name} ${c.last_name}</td>
+                  <td style="padding:0.65rem 0.75rem;color:var(--fg-muted);vertical-align:top;word-break:break-word">${c.email}</td>
+                  <td style="padding:0.65rem 0.75rem;color:var(--fg-muted);vertical-align:top">${c.phone || '—'}</td>
+                  <td style="padding:0.65rem 0.75rem;color:var(--fg-muted);vertical-align:top;max-width:14rem">${c.address ? String(c.address).replace(/</g, '') : '—'}</td>
+                  <td style="padding:0.65rem 0.75rem;text-align:right;white-space:nowrap;vertical-align:top">
+                    <button type="button" class="btn btn-outline btn-sm" onclick="editCustomer(${c.customer_id})">Edit</button>
+                    <button type="button" class="btn-destructive btn-sm" onclick="deleteCustomer(${c.customer_id})" title="Delete">✕</button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>`;
     } catch (e) { list.innerHTML = '<p style="color:var(--fg-muted)">Could not load customers.</p>'; }
   };
 
@@ -466,7 +648,21 @@ async function initCustomer() {
     }
   };
 
+  const formPanel = $('#customer-form-panel');
+  const pageLayout = $('#customer-page-layout');
+
   if (isAdmin) {
+    if (pageLayout) pageLayout.style.gridTemplateColumns = '1fr';
+    if (formPanel) {
+      formPanel.style.display = 'none';
+      formPanel.dataset.adminHidden = '1';
+    }
+    const t = $('.section-title');
+    if (t) t.textContent = 'Customer Records';
+    const st = $('.container.pt-24.pb-20 > p');
+    if (st) st.textContent = 'View and update customer account records';
+    const listHeader = document.querySelector('#customer-list-heading');
+    if (listHeader) listHeader.textContent = 'All customers';
     await loadCustomers();
   } else {
     const title = $('.section-title');
@@ -486,16 +682,16 @@ async function initCustomer() {
     const editId = form.dataset.editId;
     try {
       if (isAdmin) {
-        if (editId) {
-          await api(`/customers/${editId}`, { method: 'PUT', body: JSON.stringify(data) });
-          showToast('Customer updated');
-          delete form.dataset.editId;
-          $('#customer-submit').textContent = 'Add Customer';
-        } else {
-          await api('/customers', { method: 'POST', body: JSON.stringify(data) });
-          showToast('Customer added');
+        if (!editId) {
+          showToast('Choose a customer and click Edit to update their record');
+          return;
         }
+        await api(`/customers/${editId}`, { method: 'PUT', body: JSON.stringify(data) });
+        showToast('Customer updated');
+        delete form.dataset.editId;
+        $('#customer-submit').textContent = 'Save changes';
         form.reset();
+        if (formPanel) formPanel.style.display = 'none';
         await loadCustomers();
       } else {
         if (editId) {
@@ -523,8 +719,13 @@ async function initCustomer() {
       form.phone.value = c.phone || '';
       form.address.value = c.address || '';
       form.dataset.editId = id;
-      $('#customer-submit').textContent = 'Update Customer';
-      form.scrollIntoView({ behavior: 'smooth' });
+      $('#customer-submit').textContent = 'Save changes';
+      const ft = $('#form-title');
+      if (ft) ft.textContent = 'Edit customer record';
+      if (formPanel) {
+        formPanel.style.display = '';
+        formPanel.scrollIntoView({ behavior: 'smooth' });
+      }
     } catch (err) { showToast('Error: ' + err.message); }
   };
 
@@ -688,11 +889,21 @@ async function loadOrderTable() {
   const isAdmin = user && user.role === 'admin';
 
   try {
+    let catalog = [];
+    try { catalog = await api('/products'); } catch (e) { /* optional */ }
+    const productById = new Map(catalog.map(p => [Number(p.product_id), p]));
+
     const orders = isAdmin
       ? await api('/orders')
       : (await api('/order-tracking')).map(track => ({
         order_id: track.order_id,
-        customer_name: track.order ? `${track.order.first_name} ${track.order.last_name}` : 'You',
+        customer_name: track.order
+          ? `${track.order.first_name || ''} ${track.order.last_name || ''}`.trim()
+          : (track.user_id && (track.user_id.first_name || track.user_id.last_name)
+            ? `${track.user_id.first_name || ''} ${track.user_id.last_name || ''}`.trim()
+            : 'You'),
+        first_name: track.order?.first_name,
+        last_name: track.order?.last_name,
         items: track.items || track.order?.items || [],
         total_amount: track.order?.total_amount || 0,
         order_date: track.order?.order_date || track.created_at,
@@ -707,19 +918,12 @@ async function loadOrderTable() {
       const fallbackOrderName = order.productName || order.title || '';
       const products = Array.isArray(rawProducts)
         ? rawProducts.map(item => {
-          const productName =
-            item.name ||
-            item.productName ||
-            item.title ||
-            item.product?.name ||
-            item.product?.title ||
-            order.productName ||
-            order.title ||
-            'Unknown Product';
+          const productName = resolveItemProductDisplayName(item, productById, order);
           const qty = item.quantity || item.qty || item.count || 1;
           return `${productName} x${qty}`;
         }).join(', ')
         : (fallbackOrderName ? `${fallbackOrderName} x1` : 'Unknown Product x1');
+      const custDisplay = resolveOrderCustomerName(order);
       const currentStatus = String(order.status || 'pending').toLowerCase();
 
       let statusCell;
@@ -742,7 +946,7 @@ async function loadOrderTable() {
       let rows = `
         <tr>
           <td style="font-family:var(--font-display);font-weight:600">#${order.order_id}</td>
-          <td style="color:var(--fg-muted)">${order.customer_name || (order.customer ? order.customer.first_name + ' ' + order.customer.last_name : '—')}</td>
+          <td style="color:var(--fg-muted)">${custDisplay}</td>
           <td style="color:var(--fg-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${products}</td>
           <td style="font-family:var(--font-display);font-weight:700;color:var(--gold)">₱${Number(order.total_amount).toLocaleString()}</td>
           <td style="font-size:0.75rem;color:var(--fg-muted)">${new Date(order.order_date).toLocaleDateString('en-PH', { dateStyle: 'medium' })}</td>
@@ -763,7 +967,7 @@ async function loadOrderTable() {
           ${order.items.map(item => `
             <div class="edit-item">
               <div>
-                <div style="font-size:0.875rem">${item.product_name || item.product?.product_name || 'Product'}</div>
+                <div style="font-size:0.875rem">${resolveItemProductDisplayName(item, productById, order)}</div>
                 <div style="font-size:0.7rem;color:var(--fg-muted)">₱${Number(item.unit_price).toLocaleString()} each</div>
               </div>
               <div class="qty-controls">
@@ -963,6 +1167,7 @@ function renderAuthState() {
     if (notifIcon) notifIcon.remove();
   }
   updateFavoriteButtons();
+  updateNavbarVisibility();
 }
 
 function buildAuthModal() {
@@ -1286,78 +1491,67 @@ document.addEventListener('DOMContentLoaded', async () => {
       $('#order-modal').classList.add('hidden');
     });
   }
+  updateNavbarVisibility();
 });
-const currentUser = getAuthUser();
 
-const isLoggedIn = !!currentUser;
-const isAdmin = currentUser?.role === 'admin';
-
-const customersLink = document.querySelector('a[href="customer.html"]');
-const orderTableLink = document.querySelector('a[href="ordertable.html"]');
-const trackOrdersLink = document.querySelector('a[href="order-tracking.html"]');
-const wishlistLink = document.querySelector('a[href="wishlist.html"]');
-
-if (customersLink) {
-    customersLink.style.display = isLoggedIn ? '' : 'none';
-}
-
-if (orderTableLink) {
-    orderTableLink.style.display = isLoggedIn ? '' : 'none';
-}
-
-if (trackOrdersLink) {
-    trackOrdersLink.style.display = isLoggedIn ? '' : 'none';
-}
-
-if (wishlistLink) {
-    wishlistLink.style.display = isLoggedIn && !isAdmin ? '' : 'none';
-}
 // ======================================
 // NAVBAR VISIBILITY CONTROL
 // ======================================
 
 function updateNavbarVisibility() {
+  const currentUser = JSON.parse(localStorage.getItem('aromano_auth_user') || 'null');
+  const isLoggedIn = !!currentUser;
+  const isAdmin = currentUser?.role === 'admin';
 
-    const currentUser = JSON.parse(localStorage.getItem('aromano_auth_user'));
+  const ordersLink = document.querySelector('a[href="orders.html"]');
+  const trackOrdersLink = document.querySelector('a[href="order-tracking.html"]');
+  const customerLink = document.querySelector('a[href="customer.html"]');
+  const orderTableLink = document.querySelector('a[href="ordertable.html"]');
+  const wishlistLink = document.querySelector('a[href="wishlist.html"]');
 
-    const isLoggedIn = !!currentUser;
-    const isAdmin = currentUser?.role === 'admin';
+  const placeOrderDisplay = () => {
+    if (!isLoggedIn) return 'none';
+    if (isAdmin) return 'none';
+    return '';
+  };
+  const trackDisplay = () => {
+    if (!isLoggedIn) return 'none';
+    if (isAdmin) return 'none';
+    return '';
+  };
+  const favoritesDisplay = () => {
+    if (!isLoggedIn) return 'none';
+    if (isAdmin) return 'none';
+    return '';
+  };
 
-    // Navbar links
-    const ordersLink = document.querySelector('a[href="orders.html"]');
-    const trackOrdersLink = document.querySelector('a[href="order-tracking.html"]');
-    const customerLink = document.querySelector('a[href="customer.html"]');
-    const orderTableLink = document.querySelector('a[href="ordertable.html"]');
-    const wishlistLink = document.querySelector('a[href="wishlist.html"]');
-
-    // ======================================
-    // GUEST USER
-    // ======================================
-
-    if (!isLoggedIn) {
-
-        // Hide customer features
-        if (ordersLink) ordersLink.style.display = 'none';
-        if (trackOrdersLink) trackOrdersLink.style.display = 'none';
-        if (customerLink) customerLink.style.display = 'none';
-        if (orderTableLink) orderTableLink.style.display = 'none';
-        if (wishlistLink) wishlistLink.style.display = 'none';
-
-        return;
-    }
-
-    // ======================================
-    // LOGGED IN USERS
-    // ======================================
-
-    // Show normal customer pages
-    if (ordersLink) ordersLink.style.display = '';
-    if (trackOrdersLink) trackOrdersLink.style.display = '';
-
+  if (!isLoggedIn) {
+    if (ordersLink) ordersLink.style.display = 'none';
+    if (trackOrdersLink) trackOrdersLink.style.display = 'none';
+    if (customerLink) customerLink.style.display = 'none';
+    if (orderTableLink) orderTableLink.style.display = 'none';
+    if (wishlistLink) wishlistLink.style.display = 'none';
+  } else if (isAdmin) {
+    if (ordersLink) ordersLink.style.display = 'none';
+    if (trackOrdersLink) trackOrdersLink.style.display = 'none';
+    if (wishlistLink) wishlistLink.style.display = 'none';
     if (customerLink) customerLink.style.display = '';
     if (orderTableLink) orderTableLink.style.display = '';
-    if (wishlistLink) wishlistLink.style.display = isAdmin ? 'none' : '';
-}
+  } else {
+    if (ordersLink) ordersLink.style.display = '';
+    if (trackOrdersLink) trackOrdersLink.style.display = '';
+    if (customerLink) customerLink.style.display = '';
+    if (orderTableLink) orderTableLink.style.display = '';
+    if (wishlistLink) wishlistLink.style.display = '';
+  }
 
-// Run automatically
-document.addEventListener('DOMContentLoaded', updateNavbarVisibility);
+  document.querySelectorAll('a[href="orders.html"]').forEach((a) => {
+    a.style.display = placeOrderDisplay();
+  });
+  document.querySelectorAll('a[href="order-tracking.html"]').forEach((a) => {
+    a.style.display = trackDisplay();
+  });
+  document.querySelectorAll('a[href="wishlist.html"]').forEach((a) => {
+    a.style.display = favoritesDisplay();
+  });
+}

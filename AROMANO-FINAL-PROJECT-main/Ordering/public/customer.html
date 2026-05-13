@@ -17,7 +17,7 @@
         <a href="orders.html">Place Order</a>
         <a href="order-tracking.html">Track Orders</a>
         <a href="ordertable.html">Order Table</a>
-        <a href="wishlist.html">Wishlist</a>
+        <a href="wishlist.html">Favorites</a>
       </div>
     </div>
   </nav>
@@ -26,9 +26,9 @@
     <h1 class="section-title">Customer Management</h1>
     <p style="margin-top:0.5rem;font-size:0.875rem;color:var(--fg-muted)">Add, edit, and manage customers</p>
 
-    <div style="display:grid;gap:2rem;grid-template-columns:1fr 1fr;margin-top:2rem">
-      <!-- Add Customer Form -->
-      <div class="card" style="padding:1.5rem;align-self:start">
+    <div id="customer-page-layout" style="display:grid;gap:2rem;grid-template-columns:1fr 1fr;margin-top:2rem">
+      <!-- Edit form (admin: hidden until Edit); customer: self-service profile -->
+      <div id="customer-form-panel" class="card" style="padding:1.5rem;align-self:start">
         <h3 style="font-family:var(--font-display);font-size:1.1rem;font-weight:600;margin-bottom:1rem">
           <span id="form-title">Add New Customer</span>
         </h3>
@@ -57,9 +57,9 @@
         </form>
       </div>
 
-      <!-- Customer List -->
+      <!-- Customer records / list -->
       <div>
-        <h3 style="font-family:var(--font-display);font-size:1.1rem;font-weight:600;margin-bottom:1rem">Customers</h3>
+        <h3 id="customer-list-heading" style="font-family:var(--font-display);font-size:1.1rem;font-weight:600;margin-bottom:1rem">Customers</h3>
         <div id="customer-list" style="max-height:600px;overflow-y:auto">
           <p style="color:var(--fg-muted)">Loading customers...</p>
         </div>
