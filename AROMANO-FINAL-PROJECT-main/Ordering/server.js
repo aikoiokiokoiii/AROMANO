@@ -819,45 +819,57 @@ app.get('/api/order-tracking/:orderId', authenticateToken, async (req, res) => {
 app.put('/api/order-tracking/:orderId/status', authenticateToken, requireAdmin, async (req, res) => {
     try {
         const { status, notes, estimated_delivery, tracking_number } = req.body;
+        const orderId = parseInt(req.params.orderId, 10);
 
-        if (!['pending', 'processing', 'shipped', 'delivered'].includes(status)) {
+        if (!['pending', 'processing', 'shipped', 'delivered', 'cancelled'].includes(status)) {
             return res.status(400).json({ error: 'Invalid status' });
         }
 
-        const tracking = await OrderTracking.findOne({ order_id: parseInt(req.params.orderId) });
-        if (!tracking) {
-            return res.status(404).json({ error: 'Order tracking not found' });
+        const tracking = await OrderTracking.findOne({ order_id: orderId });
+
+        if (tracking) {
+            // Set the user who updated for history
+            tracking._updatedBy = req.user.userId;
+            tracking.status = status;
+
+            if (notes && Array.isArray(tracking.status_history) && tracking.status_history.length > 0) {
+                tracking.status_history[tracking.status_history.length - 1].notes = notes;
+            }
+
+            if (estimated_delivery) {
+                tracking.estimated_delivery = new Date(estimated_delivery);
+            }
+
+            if (tracking_number) {
+                tracking.tracking_number = tracking_number;
+            }
+
+            await tracking.save();
+
+            try {
+                await Notification.create({
+                    user: tracking.user_id,
+                    type: 'order',
+                    message: `Your order #${tracking.order_id} status has been updated to ${status}.`,
+                    relatedId: tracking.order_id
+                });
+            } catch (notifErr) {
+                console.error('Order status notification error:', notifErr);
+            }
         }
 
-        // Set the user who updated for history
-        tracking._updatedBy = req.user.userId;
-        tracking.status = status;
-
-        if (notes) {
-            tracking.status_history[tracking.status_history.length - 1].notes = notes;
-        }
-
-        if (estimated_delivery) {
-            tracking.estimated_delivery = new Date(estimated_delivery);
-        }
-
-        if (tracking_number) {
-            tracking.tracking_number = tracking_number;
-        }
-
-        await tracking.save();
-
-        // Create notification for customer
-        const notification = await Notification.create({
-            user: tracking.user_id,
-            type: 'order_update',
-            message: `Your order #${tracking.order_id} status has been updated to ${status}.`,
-            relatedId: tracking.order_id
+        await new Promise((resolve, reject) => {
+            db.query('UPDATE orders SET status = ? WHERE order_id = ?', [status, orderId], (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
         });
+
+        const updatedTracking = await OrderTracking.findOne({ order_id: orderId });
 
         res.json({
             message: 'Order status updated successfully',
-            tracking: tracking
+            tracking: updatedTracking
         });
     } catch (err) {
         console.error('Order status update error:', err);

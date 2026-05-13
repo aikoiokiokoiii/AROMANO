@@ -32,6 +32,7 @@ function isFavorite(productId) { return wishlistItems.has(productId); }
 async function loadWishlist() {
   const user = getAuthUser();
   if (!user) { wishlistItems = new Set(); updateFavoriteButtons(); return; }
+  if (user.role === 'admin') { wishlistItems = new Set(); updateFavoriteButtons(); return; }
   try {
     const result = await api('/wishlist');
     wishlistItems = new Set(result.items || []);
@@ -202,6 +203,7 @@ async function toggleFavorite(productId) {
     openAuthModal('login');
     return;
   }
+  if (user.role === 'admin') return;
   try {
     const method = isFavorite(productId) ? 'DELETE' : 'POST';
     const result = await api(`/wishlist/${productId}`, { method });
@@ -294,6 +296,10 @@ async function renderWishlistPage() {
     grid.innerHTML = '<p class="empty-state">Please log in to view your wishlist.</p>';
     return;
   }
+  if (user.role === 'admin') {
+    grid.innerHTML = '<p class="empty-state">Favorites are only available for customer accounts.</p>';
+    return;
+  }
   try {
     await loadWishlist();
     const products = await api('/products');
@@ -317,6 +323,8 @@ async function initWishlistPage() {
 }
 
 function productCardHTML(p) {
+  const user = getAuthUser();
+  const showFavorites = user && user.role !== 'admin';
   const oos = p.stock_quantity <= 0;
   const imageUrl = p.image_url || `/images/prod${p.product_id}.jpg`;
   const descriptions = {
@@ -354,7 +362,7 @@ function productCardHTML(p) {
               <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
             </svg>
           </button>
-          <button class="favorite-btn${isFavorite(p.product_id) ? ' active' : ''}" data-id="${p.product_id}" title="Toggle favorite" aria-label="Toggle favorite">♥</button>
+          ${showFavorites ? `<button class="favorite-btn${isFavorite(p.product_id) ? ' active' : ''}" data-id="${p.product_id}" title="Toggle favorite" aria-label="Toggle favorite">♥</button>` : ''}
           <button class="reviews-btn" data-id="${p.product_id}" title="View reviews" aria-label="View reviews">★</button>
         </div>
       </div>
@@ -712,7 +720,7 @@ async function loadOrderTable() {
           return `${productName} x${qty}`;
         }).join(', ')
         : (fallbackOrderName ? `${fallbackOrderName} x1` : 'Unknown Product x1');
-      const currentStatus = order.status || 'pending';
+      const currentStatus = String(order.status || 'pending').toLowerCase();
 
       let statusCell;
       if (isAdmin) {
@@ -723,6 +731,7 @@ async function loadOrderTable() {
               <option value="processing" ${currentStatus === 'processing' ? 'selected' : ''}>Processing</option>
               <option value="shipped" ${currentStatus === 'shipped' ? 'selected' : ''}>Shipped</option>
               <option value="delivered" ${currentStatus === 'delivered' ? 'selected' : ''}>Delivered</option>
+              <option value="cancelled" ${currentStatus === 'cancelled' ? 'selected' : ''}>Cancelled</option>
             </select>
           </td>
         `;
@@ -1140,7 +1149,10 @@ async function loadOrderTracking() {
       return;
     }
 
-    container.innerHTML = orders.map(order => `
+    container.innerHTML = orders.map(order => {
+      const st = String(order.status || 'pending').toLowerCase();
+      const stLabel = st.charAt(0).toUpperCase() + st.slice(1);
+      return `
       <div class="tracking-card" style="border:1px solid var(--border);border-radius:0.75rem;padding:1.5rem;margin-bottom:1rem;background:var(--bg-card)">
         <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:1rem">
           <div>
@@ -1152,7 +1164,7 @@ async function loadOrderTracking() {
             </p>
           </div>
           <div style="text-align:right">
-            <div class="status-badge status-${order.status}" style="margin-bottom:0.5rem">${order.status.toUpperCase()}</div>
+            <div class="status-badge status-${st}" style="margin-bottom:0.5rem">${stLabel.toUpperCase()}</div>
             ${order.order ? `<div style="font-family:var(--font-display);font-weight:700;color:var(--gold)">₱${Number(order.order.total_amount).toLocaleString()}</div>` : ''}
           </div>
         </div>
@@ -1166,27 +1178,49 @@ async function loadOrderTracking() {
 
         <!-- Status Timeline -->
         <div class="status-timeline" style="margin-top:1rem">
-          ${getStatusTimeline(order.status_history || [])}
+          ${getStatusTimeline(order.status_history || [], order.status)}
         </div>
       </div>
-    `).join('');
+    `;
+    }).join('');
   } catch (e) {
     container.innerHTML = '<div style="text-align:center;padding:3rem;color:var(--fg-muted)">Could not load orders. Please try again.</div>';
   }
 }
 
-function getStatusTimeline(history) {
-  const statuses = ['pending', 'processing', 'shipped', 'delivered'];
-  return statuses.map(status => {
-    const entry = history.find(h => h.status === status);
-    const isCompleted = entry || (statuses.indexOf(status) < statuses.indexOf(history[history.length - 1]?.status || 'pending'));
-    return `
+function getStatusTimeline(history, currentStatus) {
+  const pipeline = ['pending', 'processing', 'shipped', 'delivered'];
+  const effective = String(currentStatus || history[history.length - 1]?.status || 'pending').toLowerCase();
+
+  const timelineRow = (statusKey, label, isCompleted, entry) => `
       <div class="timeline-item ${isCompleted ? 'completed' : ''}" style="display:flex;align-items:center;margin:0.25rem 0">
         <div class="timeline-dot" style="width:12px;height:12px;border-radius:50%;background:${isCompleted ? 'var(--gold)' : 'var(--border)'} ;margin-right:0.5rem"></div>
-        <span style="font-size:0.875rem;color:${isCompleted ? 'var(--fg)' : 'var(--fg-muted)'}">${status.charAt(0).toUpperCase() + status.slice(1)}</span>
+        <span style="font-size:0.875rem;color:${isCompleted ? 'var(--fg)' : 'var(--fg-muted)'}">${label}</span>
         ${entry ? `<span style="font-size:0.75rem;color:var(--fg-muted);margin-left:auto">${new Date(entry.timestamp).toLocaleDateString()}</span>` : ''}
-      </div>
-    `;
+      </div>`;
+
+  if (effective === 'cancelled') {
+    const pipelineRows = pipeline.map(status => {
+      const entry = history.find(h => h.status === status);
+      const isCompleted = !!entry;
+      const label = status.charAt(0).toUpperCase() + status.slice(1);
+      return timelineRow(status, label, isCompleted, entry);
+    }).join('');
+    const cancelEntry = history.find(h => h.status === 'cancelled');
+    return pipelineRows + timelineRow('cancelled', 'Cancelled', !!cancelEntry, cancelEntry);
+  }
+
+  const lastIdx = pipeline.indexOf(effective);
+  const safeLastIdx = lastIdx >= 0 ? lastIdx : 0;
+
+  return pipeline.map(status => {
+    const entry = history.find(h => h.status === status);
+    const isCompleted =
+      !!entry ||
+      (pipeline.indexOf(status) < safeLastIdx) ||
+      (pipeline.indexOf(status) === safeLastIdx && lastIdx >= 0);
+    const label = status.charAt(0).toUpperCase() + status.slice(1);
+    return timelineRow(status, label, isCompleted, entry);
   }).join('');
 }
 
@@ -1196,10 +1230,11 @@ window.viewOrderDetails = async (orderId) => {
     const modal = $('#order-modal');
     const details = $('#order-details');
 
+    const ds = String(data.status || 'pending').toLowerCase();
     details.innerHTML = `
       <div style="margin-bottom:1rem">
         <h4 style="font-family:var(--font-display);font-size:1.1rem;font-weight:600;margin-bottom:0.5rem">Order #${data.order_id}</h4>
-        <p style="color:var(--fg-muted);font-size:0.875rem">Status: <span class="status-badge status-${data.status}">${data.status.toUpperCase()}</span></p>
+        <p style="color:var(--fg-muted);font-size:0.875rem">Status: <span class="status-badge status-${ds}">${ds.toUpperCase()}</span></p>
         ${data.order ? `
           <p style="color:var(--fg-muted);font-size:0.875rem">Date: ${new Date(data.order.order_date).toLocaleDateString('en-PH', { dateStyle: 'medium' })}</p>
           <p style="color:var(--fg-muted);font-size:0.875rem">Total: ₱${Number(data.order.total_amount).toLocaleString()}</p>
@@ -1275,7 +1310,7 @@ if (trackOrdersLink) {
 }
 
 if (wishlistLink) {
-    wishlistLink.style.display = isLoggedIn ? '' : 'none';
+    wishlistLink.style.display = isLoggedIn && !isAdmin ? '' : 'none';
 }
 // ======================================
 // NAVBAR VISIBILITY CONTROL
@@ -1321,7 +1356,7 @@ function updateNavbarVisibility() {
 
     if (customerLink) customerLink.style.display = '';
     if (orderTableLink) orderTableLink.style.display = '';
-    if (wishlistLink) wishlistLink.style.display = '';
+    if (wishlistLink) wishlistLink.style.display = isAdmin ? 'none' : '';
 }
 
 // Run automatically

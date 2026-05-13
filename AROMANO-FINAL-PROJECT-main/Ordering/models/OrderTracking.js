@@ -5,13 +5,13 @@ const OrderTrackingSchema = new mongoose.Schema({
   user_id: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }, // Customer who placed the order
   status: {
     type: String,
-    enum: ['pending', 'processing', 'shipped', 'delivered'],
+    enum: ['pending', 'processing', 'shipped', 'delivered', 'cancelled'],
     default: 'pending'
   },
   status_history: [{
     status: {
       type: String,
-      enum: ['pending', 'processing', 'shipped', 'delivered'],
+      enum: ['pending', 'processing', 'shipped', 'delivered', 'cancelled'],
       required: true
     },
     timestamp: { type: Date, default: Date.now },
