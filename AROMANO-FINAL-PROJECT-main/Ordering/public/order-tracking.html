@@ -17,7 +17,7 @@
         <a href="orders.html">Place Order</a>
         <a href="order-tracking.html" class="active">Track Orders</a>
         <a href="ordertable.html">Order Table</a>
-        <a href="wishlist.html">Wishlist</a>
+        <a href="wishlist.html">Favorites</a>
       </div>
     </div>
   </nav>
@@ -39,15 +39,11 @@
   </div>
 
   <!-- Order Details Modal -->
-  <div id="order-modal" class="modal-overlay hidden">
-    <div class="modal-box" style="max-width:600px">
-      <h3 class="modal-title">Order Details</h3>
-      <div id="order-details">
-        <!-- Order details will be loaded here -->
-      </div>
-      <div class="modal-actions">
-        <button id="close-modal-btn" class="btn btn-outline btn-sm">Close</button>
-      </div>
+  <div id="order-modal" class="modal-overlay hidden order-detail-overlay">
+    <div class="modal-box order-detail-modal">
+      <button type="button" id="close-modal-btn" class="lux-modal-close-btn" aria-label="Close">×</button>
+      <h3 class="modal-title order-detail-modal__title">Order Details</h3>
+      <div id="order-details"></div>
     </div>
   </div>
 
