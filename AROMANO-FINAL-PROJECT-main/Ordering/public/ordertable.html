@@ -17,7 +17,7 @@
         <a href="orders.html">Place Order</a>
         <a href="order-tracking.html">Track Orders</a>
         <a href="ordertable.html" class="active">Order Table</a>
-        <a href="wishlist.html">Wishlist</a>
+        <a href="wishlist.html">Favorites</a>
       </div>
     </div>
   </nav>
@@ -82,8 +82,9 @@
   </div>
 
   <!-- Delete Confirmation Modal -->
-  <div id="delete-modal" class="modal-overlay hidden">
-    <div class="modal-box">
+  <div id="delete-modal" class="modal-overlay hidden delete-confirm-overlay">
+    <div class="modal-box delete-confirm-modal">
+      <button type="button" id="delete-modal-dismiss" class="lux-modal-close-btn" aria-label="Dismiss">×</button>
       <h3 id="delete-modal-title" class="modal-title">Delete Order?</h3>
       <p class="modal-desc">This will permanently remove this order and restore the product stock. This action cannot be undone.</p>
       <div class="modal-actions">

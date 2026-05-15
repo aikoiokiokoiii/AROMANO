@@ -285,6 +285,23 @@ app.post('/api/reviews/:productId', authenticateToken, async (req, res) => {
     }
 });
 
+// PUT admin reply on a review (Admin only)
+app.put('/api/reviews/:reviewId/reply', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const { reply } = req.body;
+        const text = typeof reply === 'string' ? reply.trim() : '';
+        const rev = await Review.findById(req.params.reviewId);
+        if (!rev) return res.status(404).json({ error: 'Review not found' });
+        rev.adminReply = text;
+        rev.adminReplyAt = text ? new Date() : null;
+        await rev.save();
+        res.json({ message: 'Reply saved', review: rev });
+    } catch (err) {
+        console.error('Review reply error:', err);
+        res.status(500).json({ error: 'Could not save reply' });
+    }
+});
+
 // ============================================
 // API ROUTES: NOTIFICATIONS
 // ============================================

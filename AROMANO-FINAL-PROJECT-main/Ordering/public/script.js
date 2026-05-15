@@ -14,6 +14,44 @@ function showToast(msg) {
   t._timer = setTimeout(() => t.classList.remove('show'), 2500);
 }
 
+/** Themed glass + gold toast for important admin / status feedback */
+function showLuxToast(message, opts = {}) {
+  const duration = opts.duration ?? 4200;
+  const variant = opts.variant || 'success';
+  let root = document.getElementById('lux-toast-root');
+  if (!root) {
+    root = document.createElement('div');
+    root.id = 'lux-toast-root';
+    root.className = 'lux-toast-root';
+    root.setAttribute('aria-live', 'polite');
+    document.body.appendChild(root);
+  }
+  const el = document.createElement('div');
+  el.className = `lux-toast lux-toast--${variant}`;
+  const accent = document.createElement('span');
+  accent.className = 'lux-toast__accent';
+  const p = document.createElement('p');
+  p.className = 'lux-toast__msg';
+  p.textContent = message;
+  el.appendChild(accent);
+  el.appendChild(p);
+  root.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('lux-toast--visible'));
+  clearTimeout(el._hide);
+  el._hide = setTimeout(() => {
+    el.classList.remove('lux-toast--visible');
+    setTimeout(() => el.remove(), 480);
+  }, duration);
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 const AUTH_TOKEN_KEY = 'aromano_auth_token';
 const AUTH_USER_KEY = 'aromano_auth_user';
 
@@ -51,65 +89,113 @@ function updateFavoriteButtons() {
 
 // ── Reviews ──
 async function openReviewsModal(productId) {
+  const user = getAuthUser();
+  const isAdmin = user && user.role === 'admin';
   const modal = document.createElement('div');
-  modal.className = 'modal-overlay';
+  modal.className = 'modal-overlay reviews-lux-overlay';
   modal.innerHTML = `
-    <div class="modal-box">
-      <div class="modal-header">
-        <h3>Reviews & Ratings</h3>
-        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+    <div class="modal-box reviews-lux-modal">
+      <div class="reviews-lux-head">
+        <div>
+          <p class="reviews-lux-eyebrow">Aromano Co.</p>
+          <h3 class="reviews-lux-title">Reviews & Ratings</h3>
+        </div>
+        <button type="button" class="lux-modal-close-btn reviews-lux-close" aria-label="Close" data-close-reviews>×</button>
       </div>
-      <div id="reviews-list">Loading...</div>
-      <div id="review-form" style="margin-top:1rem;border-top:1px solid var(--border);padding-top:1rem">
-        <h4>Submit Your Review</h4>
-        <form id="submit-review-form">
-          <label>Rating (1-5): <input type="number" name="rating" min="1" max="5" required></label>
-          <label>Review: <textarea name="review" rows="3" placeholder="Optional review text"></textarea></label>
-          <button type="submit" class="btn">Submit Review</button>
+      ${isAdmin ? '<p class="reviews-lux-admin-hint reviews-lux-admin-hint--top">Official replies: use the fields under each review. The submit form is for customers only.</p>' : ''}
+      <div id="reviews-list" class="reviews-lux-list">Loading…</div>
+      <div id="review-form" class="reviews-lux-form ${isAdmin ? 'hidden' : ''}">
+        <h4 class="reviews-lux-form-title">Share your experience</h4>
+        <form id="submit-review-form" class="reviews-lux-form-grid">
+          <div class="form-group">
+            <label>Rating (1–5)</label>
+            <input type="number" name="rating" class="form-input" min="1" max="5" required>
+          </div>
+          <div class="form-group" style="grid-column:1/-1">
+            <label>Review</label>
+            <textarea name="review" class="form-textarea" rows="3" placeholder="Notes, longevity, occasion…"></textarea>
+          </div>
+          <button type="submit" class="btn btn-gold" style="grid-column:1/-1;justify-content:center">Submit review</button>
         </form>
       </div>
-    </div>
-  `;
+    </div>`;
   document.body.appendChild(modal);
+  const close = () => modal.remove();
+  modal.querySelector('[data-close-reviews]').onclick = close;
+  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
 
-  // Load reviews
-  await loadReviews(productId);
+  await loadReviews(productId, modal);
 
-  // Bind form
-  $('#submit-review-form', modal).onsubmit = async (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    const rating = Number(formData.get('rating'));
-    const review = formData.get('review');
-    try {
-      await api(`/reviews/${productId}`, { method: 'POST', body: JSON.stringify({ rating, review }) });
-      showToast('Review submitted');
-      e.target.reset();
-      await loadReviews(productId);
-    } catch (err) {
-      showToast('Review failed: ' + err.message);
-    }
-  };
+  const form = $('#submit-review-form', modal);
+  if (form) {
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const formData = new FormData(e.target);
+      const rating = Number(formData.get('rating'));
+      const review = formData.get('review');
+      try {
+        await api(`/reviews/${productId}`, { method: 'POST', body: JSON.stringify({ rating, review }) });
+        showLuxToast('Thank you — your review was submitted', { variant: 'success' });
+        e.target.reset();
+        await loadReviews(productId, modal);
+      } catch (err) {
+        showLuxToast(err.message || 'Review could not be submitted', { variant: 'error' });
+      }
+    };
+  }
 }
 
-async function loadReviews(productId) {
-  const list = $('#reviews-list');
+async function loadReviews(productId, modalRoot = document) {
+  const list = $('#reviews-list', modalRoot);
   if (!list) return;
+  const user = getAuthUser();
+  const isAdmin = user && user.role === 'admin';
   try {
     const data = await api(`/reviews/${productId}`);
     const { reviews, averageRating } = data;
     list.innerHTML = `
-      <div style="margin-bottom:1rem"><strong>Average Rating: ${averageRating} ★</strong></div>
-      ${reviews.length === 0 ? '<p>No reviews yet.</p>' : reviews.map(r => `
-        <div class="review-item" style="border-bottom:1px solid var(--border);padding:0.5rem 0">
-          <div><strong>${r.user.first_name} ${r.user.last_name}</strong> - ${'★'.repeat(r.rating)}${'☆'.repeat(5 - r.rating)} (${r.rating}/5)</div>
-          ${r.review ? `<p style="margin:0.25rem 0">${r.review}</p>` : ''}
-          <small style="color:var(--fg-muted)">${new Date(r.created_at).toLocaleDateString()}</small>
-        </div>
+      <div class="reviews-lux-avg"><span class="reviews-lux-avg-num">${averageRating}</span><span class="reviews-lux-avg-stars">${'★'.repeat(Math.round(Number(averageRating) || 0))}</span><span class="reviews-lux-avg-label">average</span></div>
+      ${reviews.length === 0 ? '<p class="reviews-lux-empty">No reviews yet — be the first.</p>' : reviews.map(r => `
+        <article class="reviews-lux-card" data-review-id="${r._id}">
+          <div class="reviews-lux-card-top">
+            <strong class="reviews-lux-name">${r.user ? `${r.user.first_name} ${r.user.last_name}` : 'Customer'}</strong>
+            <span class="reviews-lux-stars">${'★'.repeat(r.rating)}${'☆'.repeat(5 - r.rating)}</span>
+          </div>
+          ${r.review ? `<p class="reviews-lux-body">${escapeHtml(r.review)}</p>` : '<p class="reviews-lux-body muted">No written review</p>'}
+          <time class="reviews-lux-date">${new Date(r.created_at).toLocaleDateString('en-PH', { dateStyle: 'medium' })}</time>
+          ${r.adminReply ? `
+            <div class="reviews-lux-reply">
+              <span class="reviews-lux-reply-label">Aromano reply</span>
+              <p class="reviews-lux-reply-text">${escapeHtml(r.adminReply)}</p>
+              ${r.adminReplyAt ? `<time class="reviews-lux-date">${new Date(r.adminReplyAt).toLocaleDateString('en-PH', { dateStyle: 'medium' })}</time>` : ''}
+            </div>` : ''}
+          ${isAdmin ? `
+            <div class="reviews-lux-reply-editor">
+              <label class="reviews-lux-reply-label">Official reply</label>
+              <textarea class="form-textarea reviews-lux-reply-input" rows="2" placeholder="Write a thoughtful response…" data-reply-for="${r._id}">${r.adminReply ? escapeHtml(r.adminReply) : ''}</textarea>
+              <button type="button" class="btn btn-outline btn-sm" data-save-reply="${r._id}">${r.adminReply ? 'Update reply' : 'Post reply'}</button>
+            </div>` : ''}
+        </article>
       `).join('')}
     `;
+    if (isAdmin) {
+      list.querySelectorAll('[data-save-reply]').forEach(btn => {
+        btn.onclick = async () => {
+          const id = btn.dataset.saveReply;
+          const ta = list.querySelector(`textarea[data-reply-for="${id}"]`);
+          const reply = ta ? ta.value.trim() : '';
+          try {
+            await api(`/reviews/${id}/reply`, { method: 'PUT', body: JSON.stringify({ reply }) });
+            showLuxToast(reply ? 'Reply saved' : 'Reply cleared', { variant: 'success' });
+            await loadReviews(productId, modalRoot);
+          } catch (err) {
+            showLuxToast(err.message || 'Could not save reply', { variant: 'error' });
+          }
+        };
+      });
+    }
   } catch (err) {
-    list.innerHTML = '<p>Could not load reviews.</p>';
+    list.innerHTML = '<p class="reviews-lux-empty">Could not load reviews.</p>';
   }
 }
 
@@ -285,9 +371,11 @@ function resolveItemProductDisplayName(item, productById, order) {
 async function initIndex() {
   const grid = $('#featured-grid');
   if (!grid) return;
+  const user = getAuthUser();
+  const isAdmin = user && user.role === 'admin';
   try {
     const products = await api('/products');
-    grid.innerHTML = products.slice(0, 5).map(productCardHTML).join('');
+    grid.innerHTML = products.slice(0, 5).map(p => productCardHTML(p, { adminMode: isAdmin })).join('');
     bindProductButtons();
     initNotifications();
   } catch (e) { grid.innerHTML = '<p style="color:var(--fg-muted)">Could not load products.</p>'; }
@@ -298,29 +386,34 @@ async function initIndex() {
 // ══════════════════════════════════════
 function openProductAdminModal(existing, onSaved) {
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'modal-overlay admin-product-overlay';
   const isEdit = !!(existing && existing.product_id);
   overlay.innerHTML = `
-    <div class="modal-box" style="max-width:420px;max-height:90vh;overflow-y:auto">
-      <div class="modal-header">
-        <h3>${isEdit ? 'Edit product' : 'Add product'}</h3>
-        <button type="button" class="modal-close" aria-label="Close">×</button>
+    <div class="modal-box admin-product-modal">
+      <div class="admin-product-modal__head">
+        <div>
+          <p class="admin-product-modal__eyebrow">${isEdit ? 'Edit fragrance' : 'New fragrance'}</p>
+          <h3 class="admin-product-modal__title">${isEdit ? 'Edit product' : 'Add product'}</h3>
+        </div>
+        <button type="button" class="admin-product-modal__close lux-modal-close-btn" aria-label="Close">×</button>
       </div>
-      <form id="admin-product-form" style="display:flex;flex-direction:column;gap:0.75rem;margin-top:0.75rem">
-        <div class="form-group"><label>Brand</label><input name="brand" class="form-input" required></div>
-        <div class="form-group"><label>Product name</label><input name="product_name" class="form-input" required></div>
+      <form id="admin-product-form" class="admin-product-modal__form">
+        <div class="form-group"><label>Brand</label><input name="brand" class="form-input" required autocomplete="off"></div>
+        <div class="form-group"><label>Product name</label><input name="product_name" class="form-input" required autocomplete="off"></div>
         <div class="form-group"><label>Description</label><textarea name="description" class="form-textarea" rows="2"></textarea></div>
-        <div class="form-group"><label>Fragrance family</label><input name="fragrance_family" class="form-input"></div>
-        <div class="form-group"><label>Size (ml)</label><input name="size_ml" type="number" class="form-input" min="1" step="1"></div>
+        <div class="form-group"><label>Fragrance family</label><input name="fragrance_family" class="form-input" placeholder="e.g. Woody Aromatic" autocomplete="off"></div>
+        <div class="form-group admin-product-modal__row2">
+          <div><label>Size (ml)</label><input name="size_ml" type="number" class="form-input" min="1" step="1"></div>
+          <div><label>Stock</label><input name="stock_quantity" type="number" class="form-input" min="0" step="1"></div>
+        </div>
         <div class="form-group"><label>Price (₱)</label><input name="price" type="number" class="form-input" min="0" step="0.01" required></div>
-        <div class="form-group"><label>Stock</label><input name="stock_quantity" type="number" class="form-input" min="0" step="1"></div>
-        <div class="form-group"><label>Image URL</label><input name="image_url" class="form-input" placeholder="/images/prod1.jpg"></div>
-        <button type="submit" class="btn btn-gold" style="width:100%;justify-content:center">Save</button>
+        <div class="form-group"><label>Image URL</label><input name="image_url" class="form-input" placeholder="/images/prod1.jpg" autocomplete="off"></div>
+        <button type="submit" class="btn btn-gold admin-product-modal__submit">Save product</button>
       </form>
     </div>`;
   document.body.appendChild(overlay);
   const close = () => overlay.remove();
-  $('.modal-close', overlay).onclick = close;
+  $('.admin-product-modal__close', overlay).onclick = close;
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   const form = $('#admin-product-form', overlay);
   if (isEdit) {
@@ -342,15 +435,15 @@ function openProductAdminModal(existing, onSaved) {
     try {
       if (isEdit) {
         await api(`/products/${existing.product_id}`, { method: 'PUT', body: JSON.stringify(data) });
-        showToast('Product updated');
+        showLuxToast('Product updated successfully', { variant: 'success' });
       } else {
         await api('/products', { method: 'POST', body: JSON.stringify(data) });
-        showToast('Product added');
+        showLuxToast('Product added to collection', { variant: 'success' });
       }
       close();
       if (onSaved) await onSaved();
     } catch (err) {
-      showToast(err.message || 'Save failed');
+      showLuxToast(err.message || 'Save failed', { variant: 'error' });
     }
   };
 }
@@ -516,14 +609,14 @@ function productCardHTML(p, options = {}) {
           <div class="product-stock">${p.size_ml}ml • ${p.stock_quantity} in stock</div>
         </div>
         <div style="display:flex;align-items:center;gap:0.5rem">
-          <button class="add-btn" data-id="${p.product_id}" ${oos ? 'disabled' : ''} title="Add to cart" aria-label="Add to cart">
+          ${!adminMode ? `<button class="add-btn" data-id="${p.product_id}" ${oos ? 'disabled' : ''} title="Add to cart" aria-label="Add to cart">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="9" cy="21" r="1"></circle>
               <circle cx="20" cy="21" r="1"></circle>
               <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
             </svg>
-          </button>
-          ${showFavorites ? `<button class="favorite-btn${isFavorite(p.product_id) ? ' active' : ''}" data-id="${p.product_id}" title="Toggle favorite" aria-label="Toggle favorite">♥</button>` : ''}
+          </button>` : ''}
+          ${showFavorites && !adminMode ? `<button class="favorite-btn${isFavorite(p.product_id) ? ' active' : ''}" data-id="${p.product_id}" title="Toggle favorite" aria-label="Toggle favorite">♥</button>` : ''}
           <button class="reviews-btn" data-id="${p.product_id}" title="View reviews" aria-label="View reviews">★</button>
         </div>
       </div>
@@ -856,7 +949,6 @@ async function initOrders() {
 // ══════════════════════════════════════
 // ORDER TABLE PAGE (update & delete)
 // ══════════════════════════════════════
-let expandedOrderId = null;
 
 async function initOrderTable() {
   const tbody = $('#order-tbody');
@@ -930,13 +1022,16 @@ async function loadOrderTable() {
       if (isAdmin) {
         statusCell = `
           <td>
-            <select class="status-select" onchange="updateOrderStatus(${order.order_id}, this.value)" style="padding:0.25rem 0.5rem;border:1px solid var(--border);border-radius:0.25rem;font-size:0.875rem">
+            <div class="order-status-cell">
+              <select class="status-select form-input" data-order-id="${order.order_id}" aria-label="Order status">
               <option value="pending" ${currentStatus === 'pending' ? 'selected' : ''}>Pending</option>
               <option value="processing" ${currentStatus === 'processing' ? 'selected' : ''}>Processing</option>
               <option value="shipped" ${currentStatus === 'shipped' ? 'selected' : ''}>Shipped</option>
               <option value="delivered" ${currentStatus === 'delivered' ? 'selected' : ''}>Delivered</option>
               <option value="cancelled" ${currentStatus === 'cancelled' ? 'selected' : ''}>Cancelled</option>
             </select>
+              <button type="button" class="btn btn-gold btn-sm order-status-save-btn" data-commit-status="${order.order_id}">Update Status</button>
+            </div>
           </td>
         `;
       } else {
@@ -954,66 +1049,49 @@ async function loadOrderTable() {
           <td style="text-align:right">
             <div style="display:flex;gap:0.5rem;justify-content:flex-end">
               ${isAdmin
-                ? `<button class="btn btn-outline btn-sm" onclick="toggleEdit(${order.order_id})">${expandedOrderId === order.order_id ? 'Close' : 'Update'}</button>
-              <button class="btn-destructive" onclick="confirmDelete(${order.order_id})" title="Delete">✕</button>`
+                ? `<button class="btn-destructive" onclick="confirmDelete(${order.order_id})" title="Delete">✕</button>`
                 : `<a class="btn btn-outline btn-sm" href="order-tracking.html">View</a>`}
             </div>
           </td>
         </tr>`;
 
-      if (expandedOrderId === order.order_id && order.items) {
-        rows += `<tr class="edit-row"><td colspan="7" style="padding:1rem">
-          <p style="font-size:0.75rem;font-family:var(--font-display);font-weight:600;margin-bottom:0.5rem">Edit Items</p>
-          ${order.items.map(item => `
-            <div class="edit-item">
-              <div>
-                <div style="font-size:0.875rem">${resolveItemProductDisplayName(item, productById, order)}</div>
-                <div style="font-size:0.7rem;color:var(--fg-muted)">₱${Number(item.unit_price).toLocaleString()} each</div>
-              </div>
-              <div class="qty-controls">
-                <button class="qty-btn" onclick="updateOrderQty(${order.order_id},${item.product_id},${item.quantity - 1})">−</button>
-                <span class="qty-num">${item.quantity}</span>
-                <button class="qty-btn" onclick="updateOrderQty(${order.order_id},${item.product_id},${item.quantity + 1})">+</button>
-                <span style="margin-left:0.5rem;font-family:var(--font-display);font-weight:700;color:var(--gold)">₱${(item.unit_price * item.quantity).toLocaleString()}</span>
-              </div>
-            </div>
-          `).join('')}
-        </td></tr>`;
-      }
       return rows;
     }).join('');
+    if (isAdmin) {
+      tbody.querySelectorAll('.order-status-save-btn').forEach(btn => {
+        btn.addEventListener('click', () => commitOrderStatus(Number(btn.dataset.commitStatus)));
+      });
+    }
   } catch (e) { tbody.innerHTML = '<tr><td colspan="7" class="text-center" style="padding:2rem;color:var(--fg-muted)">Could not load orders.</td></tr>'; }
 }
 
-window.updateOrderStatus = async (orderId, newStatus) => {
+async function commitOrderStatus(orderId) {
   const user = getAuthUser();
   if (!user || user.role !== 'admin') {
-    showToast('Admin access required');
+    showLuxToast('Admin access required', { variant: 'error' });
     return;
   }
+  const sel = document.querySelector(`.status-select[data-order-id="${orderId}"]`);
+  if (!sel) return;
+  const newStatus = sel.value;
   try {
     await api(`/order-tracking/${orderId}/status`, {
       method: 'PUT',
       body: JSON.stringify({ status: newStatus })
     });
-    alert('Order status updated successfully!');
-    loadOrderTable(); // Refresh the table
+    showLuxToast('Order status updated successfully', { variant: 'success' });
+    await loadOrderTable();
   } catch (e) {
-    alert('Failed to update order status: ' + e.message);
+    showLuxToast('Failed to update order status: ' + (e.message || 'Unknown error'), { variant: 'error' });
   }
-};
+}
 
-window.toggleEdit = (orderId) => {
-  const user = getAuthUser();
-  if (!user || user.role !== 'admin') return;
-  expandedOrderId = expandedOrderId === orderId ? null : orderId;
-  loadOrderTable();
-};
+window.commitOrderStatus = commitOrderStatus;
 
 window.updateOrderQty = async (orderId, productId, newQty) => {
   const user = getAuthUser();
   if (!user || user.role !== 'admin') {
-    showToast('Admin access required');
+    showLuxToast('Admin access required', { variant: 'error' });
     return;
   }
   try {
@@ -1021,15 +1099,17 @@ window.updateOrderQty = async (orderId, productId, newQty) => {
       method: 'PUT',
       body: JSON.stringify({ quantity: newQty }),
     });
-    showToast(newQty <= 0 ? 'Item removed from order' : 'Order updated');
+    showLuxToast(newQty <= 0 ? 'Item removed from order' : 'Order updated', { variant: 'success' });
     await loadOrderTable();
-  } catch (err) { showToast('Error: ' + err.message); }
+  } catch (err) {
+    showLuxToast('Error: ' + err.message, { variant: 'error' });
+  }
 };
 
 window.confirmDelete = (orderId) => {
   const user = getAuthUser();
   if (!user || user.role !== 'admin') {
-    showToast('Admin access required');
+    showLuxToast('Admin access required', { variant: 'error' });
     return;
   }
   const overlay = $('#delete-modal');
@@ -1038,11 +1118,10 @@ window.confirmDelete = (orderId) => {
   $('#delete-confirm-btn').onclick = async () => {
     try {
       await api(`/orders/${orderId}`, { method: 'DELETE' });
-      showToast(`Order #${orderId} deleted and stock restored`);
+      showLuxToast(`Order #${orderId} deleted and stock restored`, { variant: 'success' });
       overlay.classList.add('hidden');
-      expandedOrderId = null;
       await loadOrderTable();
-    } catch (err) { showToast('Error: ' + err.message); }
+    } catch (err) { showLuxToast('Error: ' + err.message, { variant: 'error' }); }
   };
   $('#delete-cancel-btn').onclick = () => overlay.classList.add('hidden');
 };
@@ -1064,40 +1143,6 @@ async function loadAnalytics() {
   }
 }
 
-// ══════════════════════════════════════
-// QUIZ (Novelty Feature — client-side)
-// ══════════════════════════════════════
-const quizQuestions = [
-  { question: "What's your ideal weekend?", options: [
-    { label: "Hiking in the mountains", family: "Woody Aromatic" },
-    { label: "Fine dining in the city", family: "Amber Spicy" },
-    { label: "Beach vacation", family: "Fruity Chypre" },
-    { label: "Museum and gallery hopping", family: "Oriental Floral" },
-    { label: "Cozy night with a book", family: "Woody Oud" }
-  ]},
-  { question: "Pick your favorite season", options: [
-    { label: "Spring — fresh starts", family: "Woody Aromatic" },
-    { label: "Summer — warm nights", family: "Fruity Chypre" },
-    { label: "Autumn — golden hues", family: "Amber Spicy" },
-    { label: "Winter — deep warmth", family: "Woody Oud" }
-  ]},
-  { question: "Choose a color that speaks to you", options: [
-    { label: "Forest Green", family: "Woody Aromatic" },
-    { label: "Deep Red", family: "Amber Spicy" },
-    { label: "Ocean Blue", family: "Fruity Chypre" },
-    { label: "Midnight Purple", family: "Oriental Floral" },
-    { label: "Charcoal Black", family: "Woody Oud" }
-  ]}
-];
-
-let quizStep = 0, quizAnswers = [];
-
-function initQuiz() {
-  const container = $('#quiz-container');
-  if (!container) return;
-  renderQuizStep();
-}
-
 function openAuthModal(mode = 'login') {
   const modal = document.getElementById('auth-modal');
   if (!modal) return;
@@ -1106,6 +1151,8 @@ function openAuthModal(mode = 'login') {
   document.getElementById('auth-register-form').classList.toggle('hidden', mode !== 'register');
   document.getElementById('auth-login-tab').classList.toggle('active', mode === 'login');
   document.getElementById('auth-register-tab').classList.toggle('active', mode === 'register');
+  const h = document.getElementById('auth-lux-heading');
+  if (h) h.textContent = mode === 'register' ? 'Create account' : 'Sign in';
 }
 
 function closeAuthModal() {
@@ -1142,6 +1189,8 @@ function renderAuthState() {
     navLinks.appendChild(authButton);
   }
   const user = getAuthUser();
+  const adminQuizRoot = $('#quiz-admin-root');
+  if (adminQuizRoot && (!user || user.role !== 'admin')) adminQuizRoot.remove();
   if (user) {
     authButton.textContent = `Logout (${user.role})`;
     authButton.onclick = (event) => {
@@ -1154,7 +1203,7 @@ function renderAuthState() {
       const notifDropdown = document.querySelector('.notifications-dropdown');
       if (notifDropdown) notifDropdown.remove();
       renderAuthState();
-      showToast('Logged out');
+      showLuxToast('Successfully logged out', { variant: 'success' });
     };
     initNotifications();
   } else {
@@ -1168,59 +1217,82 @@ function renderAuthState() {
   }
   updateFavoriteButtons();
   updateNavbarVisibility();
+  if (user && user.role === 'admin' && $('#quiz-container')) {
+    const qc = $('#quiz-container');
+    const wrap = qc.closest('.container');
+    if (wrap) {
+      let adminRoot = $('#quiz-admin-root');
+      if (!adminRoot) {
+        adminRoot = document.createElement('div');
+        adminRoot.id = 'quiz-admin-root';
+        adminRoot.className = 'quiz-admin-panel card';
+        wrap.insertBefore(adminRoot, qc);
+      }
+      renderQuizAdminPanel(adminRoot);
+    }
+  }
 }
 
 function buildAuthModal() {
   if (document.getElementById('auth-modal')) return;
   const modal = document.createElement('div');
   modal.id = 'auth-modal';
-  modal.className = 'modal-overlay hidden';
+  modal.className = 'modal-overlay auth-lux-overlay hidden';
   modal.innerHTML = `
-    <div class="modal-box">
-      <div style="display:flex;gap:0.75rem;margin-bottom:1.25rem;">
-        <button id="auth-login-tab" class="btn btn-outline btn-sm active" type="button">Login</button>
-        <button id="auth-register-tab" class="btn btn-outline btn-sm" type="button">Register</button>
+    <div class="modal-box auth-lux-modal">
+      <button type="button" id="auth-modal-close" class="lux-modal-close-btn" aria-label="Close">×</button>
+      <div class="auth-lux-brand">
+        <p class="auth-lux-eyebrow">Aromano Co.</p>
+        <h2 class="auth-lux-heading" id="auth-lux-heading">Sign in</h2>
+        <p class="auth-lux-sub">Premium fragrances, your account.</p>
       </div>
-      <form id="auth-login-form">
+      <div class="auth-lux-tabs">
+        <button id="auth-login-tab" class="auth-lux-tab active" type="button">Login</button>
+        <button id="auth-register-tab" class="auth-lux-tab" type="button">Register</button>
+      </div>
+      <form id="auth-login-form" class="auth-lux-form">
         <div class="form-group">
           <label>Email</label>
-          <input type="email" name="email" class="form-input" required>
+          <input type="email" name="email" class="form-input auth-lux-input" required autocomplete="email">
         </div>
         <div class="form-group">
           <label>Password</label>
-          <input type="password" name="password" class="form-input" required>
+          <input type="password" name="password" class="form-input auth-lux-input" required autocomplete="current-password">
         </div>
-        <button class="btn btn-gold" type="submit" style="width:100%;">Sign in</button>
+        <button class="btn btn-gold auth-lux-submit" type="submit">Sign in</button>
       </form>
-      <form id="auth-register-form" class="hidden">
+      <form id="auth-register-form" class="auth-lux-form hidden">
         <div class="form-group">
-          <label>First Name</label>
-          <input type="text" name="first_name" class="form-input">
+          <label>First name</label>
+          <input type="text" name="first_name" class="form-input auth-lux-input" autocomplete="given-name">
         </div>
         <div class="form-group">
-          <label>Last Name</label>
-          <input type="text" name="last_name" class="form-input">
+          <label>Last name</label>
+          <input type="text" name="last_name" class="form-input auth-lux-input" autocomplete="family-name">
         </div>
         <div class="form-group">
           <label>Email</label>
-          <input type="email" name="email" class="form-input" required>
+          <input type="email" name="email" class="form-input auth-lux-input" required autocomplete="email">
         </div>
         <div class="form-group">
           <label>Password</label>
-          <input type="password" name="password" class="form-input" required>
+          <input type="password" name="password" class="form-input auth-lux-input" required autocomplete="new-password">
         </div>
-        <button class="btn btn-gold" type="submit" style="width:100%;">Create account</button>
+        <button class="btn btn-gold auth-lux-submit" type="submit">Create account</button>
       </form>
-      <button id="auth-close-btn" class="btn btn-outline btn-sm" type="button" style="margin-top:1rem;width:100%;">Close</button>
     </div>
   `;
   document.body.appendChild(modal);
   modal.addEventListener('click', (event) => {
     if (event.target === modal) closeAuthModal();
   });
-  document.getElementById('auth-login-tab').addEventListener('click', () => openAuthModal('login'));
-  document.getElementById('auth-register-tab').addEventListener('click', () => openAuthModal('register'));
-  document.getElementById('auth-close-btn').addEventListener('click', closeAuthModal);
+  const syncHeading = (mode) => {
+    const h = document.getElementById('auth-lux-heading');
+    if (h) h.textContent = mode === 'register' ? 'Create account' : 'Sign in';
+  };
+  document.getElementById('auth-login-tab').addEventListener('click', () => { openAuthModal('login'); syncHeading('login'); });
+  document.getElementById('auth-register-tab').addEventListener('click', () => { openAuthModal('register'); syncHeading('register'); });
+  document.getElementById('auth-modal-close').addEventListener('click', closeAuthModal);
   document.getElementById('auth-login-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.target));
@@ -1231,9 +1303,9 @@ function buildAuthModal() {
       await loadWishlist();
       renderAuthState();
       closeAuthModal();
-      showToast('Logged in successfully');
+      showLuxToast('Successfully logged in', { variant: 'success' });
     } catch (err) {
-      showToast('Login failed: ' + err.message);
+      showLuxToast('Login failed: ' + err.message, { variant: 'error' });
     }
   });
   document.getElementById('auth-register-form').addEventListener('submit', async (event) => {
@@ -1246,11 +1318,12 @@ function buildAuthModal() {
       await loadWishlist();
       renderAuthState();
       closeAuthModal();
-      showToast('Account created successfully');
+      showLuxToast('Successfully registered', { variant: 'success' });
     } catch (err) {
-      showToast('Register failed: ' + err.message);
+      showLuxToast('Register failed: ' + err.message, { variant: 'error' });
     }
   });
+  syncHeading('login');
 }
 
 async function initAuthUI() {
@@ -1261,51 +1334,259 @@ async function initAuthUI() {
   renderAuthState();
 }
 
+// ══════════════════════════════════════
+// QUIZ (client-side bank + admin management on Home)
+// ══════════════════════════════════════
+const QUIZ_STORAGE_KEY = 'aromano_quiz_bank_v1';
+const QUIZ_DEFAULT_BANK = [
+  { question: "What's your ideal weekend?", options: [
+    { label: 'Hiking in the mountains', family: 'Woody Aromatic' },
+    { label: 'Fine dining in the city', family: 'Amber Spicy' },
+    { label: 'Beach vacation', family: 'Fruity Chypre' },
+    { label: 'Museum and gallery hopping', family: 'Oriental Floral' },
+    { label: 'Cozy night with a book', family: 'Woody Oud' },
+  ]},
+  { question: 'Pick your favorite season', options: [
+    { label: 'Spring — fresh starts', family: 'Woody Aromatic' },
+    { label: 'Summer — warm nights', family: 'Fruity Chypre' },
+    { label: 'Autumn — golden hues', family: 'Amber Spicy' },
+    { label: 'Winter — deep warmth', family: 'Woody Oud' },
+  ]},
+  { question: 'Choose a color that speaks to you', options: [
+    { label: 'Forest Green', family: 'Woody Aromatic' },
+    { label: 'Deep Red', family: 'Amber Spicy' },
+    { label: 'Ocean Blue', family: 'Fruity Chypre' },
+    { label: 'Midnight Purple', family: 'Oriental Floral' },
+    { label: 'Charcoal Black', family: 'Woody Oud' },
+  ]},
+];
+
+function cloneQuizDefaults() {
+  return JSON.parse(JSON.stringify(QUIZ_DEFAULT_BANK));
+}
+
+function getQuizBank() {
+  try {
+    const raw = localStorage.getItem(QUIZ_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0 &&
+          parsed.every(q => q && typeof q.question === 'string' && Array.isArray(q.options) && q.options.length > 0 &&
+            q.options.every(o => o && typeof o.label === 'string' && typeof o.family === 'string'))) {
+        return parsed;
+      }
+    }
+  } catch (e) { /* ignore */ }
+  return cloneQuizDefaults();
+}
+
+function persistQuizBank(bank) {
+  localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify(bank));
+  refreshQuizAdminPanel();
+}
+
+let quizStep = 0;
+let quizAnswers = [];
+
+function refreshQuizAdminPanel() {
+  const root = $('#quiz-admin-root');
+  if (root) renderQuizAdminPanel(root);
+}
+
+function renderQuizAdminPanel(root) {
+  const bank = getQuizBank();
+  root.innerHTML = `
+    <div class="quiz-admin-inner">
+      <p class="section-tag" style="margin:0">Admin</p>
+      <h3 class="quiz-admin-title">Quiz management</h3>
+      <p class="quiz-admin-desc">Stored in this browser (localStorage). Customers only take the quiz below.</p>
+      <ul class="quiz-admin-list">
+        ${bank.map((q, i) => `
+          <li class="quiz-admin-row">
+            <div class="quiz-admin-qtext"><strong>${i + 1}.</strong> ${escapeHtml(q.question)} <span class="quiz-admin-meta">(${q.options.length} answers)</span></div>
+            <div class="quiz-admin-actions">
+              <button type="button" class="btn btn-outline btn-sm" data-quiz-edit="${i}">Edit</button>
+              <button type="button" class="btn-destructive btn-sm" data-quiz-del="${i}">Delete</button>
+            </div>
+          </li>`).join('')}
+      </ul>
+      <button type="button" class="btn btn-gold btn-sm" id="quiz-admin-add">Add question</button>
+    </div>`;
+  root.querySelectorAll('[data-quiz-edit]').forEach(btn => {
+    btn.onclick = () => openQuizEditorModal(Number(btn.dataset.quizEdit));
+  });
+  root.querySelectorAll('[data-quiz-del]').forEach(btn => {
+    btn.onclick = () => {
+      const idx = Number(btn.dataset.quizDel);
+      if (!confirm('Delete this quiz question?')) return;
+      const b = getQuizBank();
+      b.splice(idx, 1);
+      persistQuizBank(b);
+      if (quizStep >= b.length) quizStep = Math.max(0, b.length - 1);
+      if (b.length === 0) quizStep = 0;
+      renderQuizStep();
+      showLuxToast('Question removed', { variant: 'info' });
+    };
+  });
+  const addBtn = $('#quiz-admin-add', root);
+  if (addBtn) addBtn.onclick = () => openQuizEditorModal(null);
+}
+
+function openQuizEditorModal(editIndex) {
+  const bank = getQuizBank();
+  const existing = editIndex != null && editIndex >= 0 ? bank[editIndex] : null;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay admin-product-overlay';
+  const optRows = (existing && existing.options ? existing.options : [
+    { label: '', family: '' }, { label: '', family: '' },
+  ]).map((o, i) => `
+    <div class="quiz-opt-row" data-opt-i="${i}">
+      <div class="form-group"><label>Option ${i + 1} label</label><input type="text" class="form-input quiz-opt-label" value="${escapeHtml(o.label)}"></div>
+      <div class="form-group"><label>Fragrance family</label><input type="text" class="form-input quiz-opt-family" value="${escapeHtml(o.family)}" placeholder="Woody Aromatic"></div>
+    </div>`).join('');
+  overlay.innerHTML = `
+    <div class="modal-box admin-product-modal quiz-editor-modal">
+      <div class="admin-product-modal__head">
+        <div>
+          <p class="admin-product-modal__eyebrow">Fragrance quiz</p>
+          <h3 class="admin-product-modal__title">${existing ? 'Edit question' : 'Add question'}</h3>
+        </div>
+        <button type="button" class="admin-product-modal__close lux-modal-close-btn" aria-label="Close">×</button>
+      </div>
+      <form id="quiz-editor-form" class="admin-product-modal__form">
+        <div class="form-group">
+          <label>Question</label>
+          <input type="text" class="form-input" name="question" required value="${existing ? escapeHtml(existing.question) : ''}">
+        </div>
+        <p class="quiz-editor-opt-head">Answer choices (label + fragrance family for recommendations)</p>
+        <div id="quiz-opt-rows">${optRows}</div>
+        <button type="button" class="btn btn-outline btn-sm" id="quiz-add-opt-row" style="margin-top:0.5rem">Add answer row</button>
+        <button type="submit" class="btn btn-gold admin-product-modal__submit" style="margin-top:1rem">Save question</button>
+      </form>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector('.admin-product-modal__close').onclick = close;
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  const rowsWrap = $('#quiz-opt-rows', overlay);
+  $('#quiz-add-opt-row', overlay).onclick = () => {
+    const n = rowsWrap.querySelectorAll('.quiz-opt-row').length;
+    const div = document.createElement('div');
+    div.className = 'quiz-opt-row';
+    div.innerHTML = `
+      <div class="form-group"><label>Option ${n + 1} label</label><input type="text" class="form-input quiz-opt-label" value=""></div>
+      <div class="form-group"><label>Fragrance family</label><input type="text" class="form-input quiz-opt-family" value="" placeholder="Woody Aromatic"></div>`;
+    rowsWrap.appendChild(div);
+  };
+  $('#quiz-editor-form', overlay).onsubmit = (e) => {
+    e.preventDefault();
+    const qText = e.target.question.value.trim();
+    if (!qText) {
+      showLuxToast('Question text is required', { variant: 'error' });
+      return;
+    }
+    const opts = [];
+    rowsWrap.querySelectorAll('.quiz-opt-row').forEach(row => {
+      const label = row.querySelector('.quiz-opt-label')?.value.trim() || '';
+      const family = row.querySelector('.quiz-opt-family')?.value.trim() || '';
+      if (label && family) opts.push({ label, family });
+    });
+    if (opts.length < 2) {
+      showLuxToast('Add at least two complete answer choices (label + family)', { variant: 'error' });
+      return;
+    }
+    const next = getQuizBank();
+    const entry = { question: qText, options: opts };
+    if (editIndex != null && editIndex >= 0) next[editIndex] = entry;
+    else next.push(entry);
+    persistQuizBank(next);
+    showLuxToast('Quiz question saved', { variant: 'success' });
+    close();
+    quizStep = 0;
+    quizAnswers = [];
+    renderQuizStep();
+  };
+}
+
 function initQuiz() {
   const container = $('#quiz-container');
   if (!container) return;
+  const user = getAuthUser();
+  const wrap = container.closest('.container');
+  if (user && user.role === 'admin' && wrap) {
+    let adminRoot = $('#quiz-admin-root');
+    if (!adminRoot) {
+      adminRoot = document.createElement('div');
+      adminRoot.id = 'quiz-admin-root';
+      adminRoot.className = 'quiz-admin-panel card';
+      wrap.insertBefore(adminRoot, container);
+    }
+    renderQuizAdminPanel(adminRoot);
+  }
   renderQuizStep();
 }
 
 function renderQuizStep() {
   const container = $('#quiz-container');
-  if (quizStep >= quizQuestions.length) { renderQuizResult(); return; }
-  const q = quizQuestions[quizStep];
+  if (!container) return;
+  const bank = getQuizBank();
+  if (bank.length === 0) {
+    container.innerHTML = '<p class="empty-state">No quiz questions configured. Use Quiz management above to add questions.</p>';
+    return;
+  }
+  if (quizStep >= bank.length) { renderQuizResult(); return; }
+  const q = bank[quizStep];
   container.innerHTML = `
-    <div class="quiz-progress">${quizQuestions.map((_, i) => `<div class="quiz-bar${i <= quizStep ? ' active' : ''}"></div>`).join('')}</div>
-    <h2 class="section-title">${q.question}</h2>
-    <div style="margin-top:1.5rem">${q.options.map(o => `<button class="quiz-option" onclick="quizAnswer('${o.family}')">${o.label}</button>`).join('')}</div>
+    <div class="quiz-progress">${bank.map((_, i) => `<div class="quiz-bar${i <= quizStep ? ' active' : ''}"></div>`).join('')}</div>
+    <h2 class="section-title">${escapeHtml(q.question)}</h2>
+    <div style="margin-top:1.5rem">${q.options.map(o =>
+      `<button type="button" class="quiz-option" data-quiz-family="${escapeHtml(o.family)}">${escapeHtml(o.label)}</button>`
+    ).join('')}</div>
   `;
+  container.querySelectorAll('.quiz-option').forEach(btn => {
+    btn.onclick = () => {
+      quizAnswers.push(btn.dataset.quizFamily);
+      quizStep++;
+      renderQuizStep();
+    };
+  });
 }
-
-window.quizAnswer = (family) => {
-  quizAnswers.push(family);
-  quizStep++;
-  renderQuizStep();
-};
 
 async function renderQuizResult() {
   const container = $('#quiz-container');
+  if (!container) return;
+  if (quizAnswers.length === 0) {
+    container.innerHTML = '<p class="empty-state">No quiz result.</p>';
+    return;
+  }
   const counts = {};
-  quizAnswers.forEach(a => counts[a] = (counts[a] || 0) + 1);
+  quizAnswers.forEach(a => { counts[a] = (counts[a] || 0) + 1; });
   const winner = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
   let recommended = [];
   try {
     const products = await api('/products');
     recommended = products.filter(p => p.fragrance_family === winner);
-  } catch (e) {}
+  } catch (e) { /* ignore */ }
   container.innerHTML = `
     <p class="section-tag text-center">Your Fragrance Family</p>
-    <h2 class="quiz-result-title text-center mt-2">${winner}</h2>
+    <h2 class="quiz-result-title text-center mt-2">${escapeHtml(winner)}</h2>
     <p style="text-align:center;font-size:0.875rem;color:var(--fg-muted);margin-top:1rem">Based on your personality, we recommend these fragrances:</p>
-    <div class="product-grid" style="margin-top:2rem">${recommended.map(productCardHTML).join('')}</div>
+    <div class="product-grid" style="margin-top:2rem">${recommended.map(p => productCardHTML(p)).join('')}</div>
     ${recommended.length === 0 ? '<p class="empty-state">No exact matches — explore our full collection!</p>' : ''}
-    <div class="text-center mt-8"><button class="btn btn-outline" onclick="resetQuiz()">Retake Quiz</button></div>
+    <div class="text-center mt-8"><button type="button" class="btn btn-outline" id="quiz-retake-btn">Retake Quiz</button></div>
   `;
   bindProductButtons();
+  const retake = $('#quiz-retake-btn', container);
+  if (retake) retake.onclick = () => { resetQuiz(); };
 }
 
-window.resetQuiz = () => { quizStep = 0; quizAnswers = []; renderQuizStep(); };
+function resetQuiz() {
+  quizStep = 0;
+  quizAnswers = [];
+  renderQuizStep();
+}
+
+window.resetQuiz = resetQuiz;
 
 function initPageTransitions() {
   const navLinks = document.querySelectorAll('.navbar-links a');
@@ -1465,7 +1746,7 @@ window.viewOrderDetails = async (orderId) => {
 
     modal.classList.remove('hidden');
   } catch (e) {
-    alert('Could not load order details');
+    showLuxToast('Could not load order details', { variant: 'error' });
   }
 };
 
@@ -1489,6 +1770,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (closeModalBtn) {
     closeModalBtn.addEventListener('click', () => {
       $('#order-modal').classList.add('hidden');
+    });
+  }
+  const deleteDismiss = $('#delete-modal-dismiss');
+  if (deleteDismiss) {
+    deleteDismiss.addEventListener('click', () => {
+      const dm = $('#delete-modal');
+      if (dm) dm.classList.add('hidden');
     });
   }
   updateNavbarVisibility();
